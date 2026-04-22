@@ -2,10 +2,10 @@ import yfinance as yf
 import pandas as pd
 import streamlit as st
 import numpy as np
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 
 # --- 14. Classic Design & UI Tweaks ---
-st.set_page_config(page_title="Trading Dashboard", layout="wide")
+st.set_page_config(page_title="Trading Dashboard", layout="centered")
 st.markdown("""
     <style>
     .main {background-color: #f4f6f9;}
@@ -18,15 +18,6 @@ st.markdown("""
 
 # --- 1 & 2. Title Update ---
 st.title("📊 Trading Dashboard")
-
-# --- 3. Refresh Button ---
-col1, col2 = st.columns([4, 1])
-with col2:
-    st.write("") 
-    if st.button("🔄 Refresh Data Now", use_container_width=True):
-        st.cache_data.clear()
-        st.rerun()
-st.info(f"🕒 **Last Updated:** {datetime.now().strftime('%I:%M:%S %p')}")
 
 futures_symbols = {
     'USD': 'DX-Y.NYB', 'EUR': '6E=F', 'GBP': '6B=F', 
@@ -97,6 +88,19 @@ def get_futures_data():
     df_res.index = np.arange(1, len(df_res) + 1)
     return df_res
 
+# --- 3. Refresh Button ---
+col1, col2 = st.columns([4, 1])
+with col2:
+    st.write("") 
+    if st.button("🔄 Refresh Data Now", use_container_width=True):
+        get_futures_data.clear() 
+        st.rerun()
+
+# --- PAKISTAN TIME LOGIC (UTC + 5) ---
+pkt_timezone = timezone(timedelta(hours=5))
+pkt_time = datetime.now(pkt_timezone).strftime('%I:%M:%S %p')
+st.info(f"🕒 **Last Updated:** {pkt_time} (PKT)")
+
 df = get_futures_data()
 
 # --- 9. Colors ---
@@ -110,11 +114,10 @@ def highlight_remarks(val):
     if "⚠️" in str(val): return 'color: #c0392b; font-weight: bold'
     return ''
 
-# --- 4. Analysis Phase (Fixed Table Width) ---
+# --- 4. Analysis Phase ---
 st.markdown("---")
 st.subheader("🔍 Analysis Phase")
-# st.dataframe ki jagah ab hum st.table use kar rahe hain taake width compact rahe
-st.table(df.style.map(highlight_cells, subset=['Strength Score']).map(highlight_remarks, subset=['Remarks']))
+st.dataframe(df.style.map(highlight_cells, subset=['Strength Score']).map(highlight_remarks, subset=['Remarks']))
 
 # --- 11. Recommendation Section ---
 st.markdown("---")
