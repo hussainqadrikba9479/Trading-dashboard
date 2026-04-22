@@ -32,7 +32,7 @@ st.subheader("📊 Institutional Sentiment (COT Data)")
 def load_cot_data():
     try:
         # Excel file read karna (GitHub se upload hone ke baad)
-        df_cot = pd.read_excel("COT.xlsx", sheet_name="Main")
+        df_cot = pd.read_excel("COT.xlsm", sheet_name="Main", engine='openpyxl')
         # Sirf ahem columns select karna (Aap ki sheet ke mutabiq)
         return df_cot[['Instruments', 'Net Change', 'Direction', 'COT Index', 'OI Change']]
     except Exception as e:
