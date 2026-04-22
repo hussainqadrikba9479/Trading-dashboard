@@ -2,7 +2,7 @@ import yfinance as yf
 import pandas as pd
 import streamlit as st
 import numpy as np
-import feedparser
+import requests
 from datetime import datetime, timezone, timedelta
 
 # --- Dashboard Setup ---
@@ -15,7 +15,7 @@ st.markdown("""
     .hawkish {background-color: #2ecc71;}
     .dovish {background-color: #e74c3c;}
     .neutral {background-color: #95a5a6;}
-    .news-card {border-bottom: 1px solid #ddd; padding: 10px 0;}
+    .news-card {border-left: 6px solid #e74c3c; background-color: #ffffff; padding: 15px; border-radius: 8px; box-shadow: 0px 4px 6px rgba(0,0,0,0.1); margin-bottom: 10px;}
     </style>
 """, unsafe_allow_html=True)
 
@@ -27,8 +27,6 @@ pkt_time = datetime.now(pkt_timezone).strftime('%I:%M:%S %p')
 st.info(f"🕒 **Last Updated:** {pkt_time} (PKT)")
 
 # --- Central Bank Bias (Fundamental View) ---
-# Note: Ye manually update hota hai ya professional sentiment APIs se liya jata hai.
-# Filhal hum ne standard current sentiment add kiya hai.
 cb_sentiment = {
     'USD': {'Bias': 'Hawkish/Neutral', 'Policy': 'High Rates', 'Color': 'hawkish'},
     'EUR': {'Bias': 'Dovish', 'Policy': 'Rate Cuts Starting', 'Color': 'dovish'},
@@ -57,27 +55,21 @@ def get_merged_data():
     data_list = []
     for currency, ticker in futures_symbols.items():
         try:
-            # Fetch Daily and H4 Data
             df_d = yf.download(ticker, period="1mo", interval="1d", progress=False)
-            df_h4 = yf.download(ticker, period="5d", interval="1h", progress=False) # yfinance uses 1h for H4 approx
+            df_h4 = yf.download(ticker, period="5d", interval="1h", progress=False) 
             
             if df_d.empty or df_h4.empty: continue
             
-            # Clean Columns
             if isinstance(df_d.columns, pd.MultiIndex): df_d.columns = df_d.columns.droplevel(1)
             if isinstance(df_h4.columns, pd.MultiIndex): df_h4.columns = df_h4.columns.droplevel(1)
 
-            # Technicals (Daily)
             close_d = df_d['Close'].iloc[-1]
             sma20_d = df_d['Close'].rolling(20).mean().iloc[-1]
             rsi_d = calc_rsi(df_d['Close']).iloc[-1]
             
-            # Technicals (H4)
             close_h4 = df_h4['Close'].iloc[-1]
             sma20_h4 = df_h4['Close'].rolling(20).mean().iloc[-1]
             
-            # --- CONFLUENCE LOGIC ---
-            # 1. Structure Check
             daily_trend = "UP" if close_d > sma20_d else "DOWN"
             h4_trend = "UP" if close_h4 > sma20_h4 else "DOWN"
             
@@ -97,9 +89,8 @@ def get_merged_data():
                 observation = "Correction (Daily Bearish)"
                 score = 4
             
-            # RSI Adjustment
-            if rsi_d > 70: score -= 1 # Overbought correction
-            if rsi_d < 30: score += 1 # Oversold bounce
+            if rsi_d > 70: score -= 1 
+            if rsi_d < 30: score += 1 
 
             data_list.append({
                 'Currency': currency,
@@ -115,7 +106,7 @@ def get_merged_data():
     res.index = np.arange(1, len(res) + 1)
     return res
 
-# --- 1. Central Bank & Fundamental View Section ---
+# --- 1. Central Bank View ---
 st.subheader("🏛️ Central Bank Sentiment (Fundamental View)")
 cols = st.columns(len(cb_sentiment))
 for i, (curr, info) in enumerate(cb_sentiment.items()):
@@ -126,7 +117,7 @@ for i, (curr, info) in enumerate(cb_sentiment.items()):
             </div>
         """, unsafe_allow_html=True)
 
-# --- 2. Analysis Phase (Merged D1 + H4) ---
+# --- 2. Analysis Phase ---
 st.markdown("---")
 st.subheader("🔍 Analysis Phase (Daily + H4 Confluence)")
 df = get_merged_data()
@@ -138,7 +129,7 @@ def highlight_score(val):
 
 st.dataframe(df.style.map(highlight_score, subset=['Master Strength']), use_container_width=True)
 
-# --- 3. Recommendation Section ---
+# --- 3. Recommendations ---
 st.markdown("---")
 st.subheader("🎯 Recommendations")
 if not df.empty:
@@ -148,31 +139,52 @@ if not df.empty:
     if not strong.empty and not weak.empty:
         for _, s in strong.iterrows():
             for _, w in weak.iterrows():
-                # Simple logic for Pair derivation
                 st.success(f"✅ **High Probability Setup: {s['Currency']}{w['Currency']} (BUY)**")
                 st.write(f"Reason: Both D1/H4 are {s['Observation']} and Central Bank favors {s['Currency']}.")
     else:
         st.warning("Market is currently mixed. No High Probability Confluence found.")
 
-# --- 4. Today's High Impact News ---
+# --- 4. Live News API (High Impact Only) ---
 st.markdown("---")
-st.subheader("📰 Today's High Impact News")
+st.subheader("🚨 Today's High Impact News")
+
+@st.cache_data(ttl=600) # Cache news for 10 minutes
 def get_forex_news():
     try:
-        # Fetching from a public RSS feed (Forex Factory or similar)
-        feed = feedparser.parse("https://www.forexfactory.com/ff_calendar_thisweek.xml")
-        today = datetime.now().strftime("%m-%d-%Y")
+        # Official JSON API
+        url = "https://nfs.faireconomy.media/ff_calendar_thisweek.json"
+        response = requests.get(url, timeout=10)
+        data = response.json()
+        
+        # Aaj ki date nikalna PKT mein
+        today_date = datetime.now(pkt_timezone).strftime("%Y-%m-%d")
         news_found = False
-        for entry in feed.entries[:10]: # Top 10 events
-            st.markdown(f"""
-                <div class='news-box'>
-                    <b>{entry.title}</b><br>
-                    <small>Impact: {entry.get('forex_impact', 'Unknown')} | Time: {entry.get('forex_eventtime', 'Check Calendar')}</small>
-                </div>
-            """, unsafe_allow_html=True)
-            news_found = True
-        if not news_found: st.write("No major news items found for today.")
-    except:
-        st.write("Unable to fetch live news at the moment. Please check ForexFactory.com")
+        
+        for event in data:
+            event_date_str = event.get('date', '')[:10]
+            impact = event.get('impact', '')
+            
+            # Agar news High impact hai aur aaj ki date ki hai
+            if impact == 'High' and event_date_str == today_date:
+                try:
+                    # Time ko PKT mein convert karna
+                    dt_obj = datetime.fromisoformat(event['date'])
+                    pkt_dt = dt_obj.astimezone(pkt_timezone)
+                    display_time = pkt_dt.strftime("%I:%M %p")
+                except:
+                    display_time = "Check Calendar"
+
+                st.markdown(f"""
+                    <div class='news-card'>
+                        <b>🔴 {event['country']} - {event['title']}</b><br>
+                        <small>Time: {display_time} (PKT) | Forecast: {event.get('forecast', '-')} | Previous: {event.get('previous', '-')}</small>
+                    </div>
+                """, unsafe_allow_html=True)
+                news_found = True
+                
+        if not news_found:
+            st.info("Aaj koi High Impact (Red Folder) news nahi hai. Market technicals ke hisab se chalegi.")
+    except Exception as e:
+        st.error(f"Live news load hone mein masla aa raha hai. ({e})")
 
 get_forex_news()
