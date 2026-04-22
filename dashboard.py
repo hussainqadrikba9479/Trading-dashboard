@@ -115,27 +115,40 @@ def style_score(val):
 
 st.dataframe(df_fx.style.map(style_score, subset=['Score']), use_container_width=True, hide_index=True)
 
-# --- 3. RECOMMENDATIONS SECTION ---
+# --- 3. STRICT RECOMMENDATIONS SECTION (Technical + VSA Locked) ---
 st.markdown("---")
-st.subheader("🎯 Trade Recommendations (Confluence)")
+st.subheader("🎯 Refined Trade Recommendations (Technicals + VSA)")
 if not df_fx.empty:
     strong = df_fx[df_fx['Score'] >= 8]
     weak = df_fx[df_fx['Score'] <= 3]
     found = False
+    
     for _, s in strong.iterrows():
         for _, w in weak.iterrows():
             c1, c2 = s['Instrument'], w['Instrument']
-            order = ['EUR', 'GBP', 'AUD', 'NZD', 'USD', 'CAD', 'CHF', 'JPY']
-            try:
-                if order.index(c1) < order.index(c2): pair, action = f"{c1}{c2}", "BUY"
-                else: pair, action = f"{c2}{c1}", "SELL"
+            s_vsa, w_vsa = str(s['VSA']), str(w['VSA'])
+            
+            # Rule 1: No Contradiction (Filter out opposing volume signals)
+            if "SOW" in s_vsa or "Demand" in s_vsa: continue # Strong pair rejecting higher prices
+            if "SOS" in w_vsa or "Supply" in w_vsa: continue # Weak pair rejecting lower prices
+            
+            # Rule 2: VSA Confirmation (At least one must have active Smart Money footprint)
+            vsa_confirmed = False
+            if "SOS" in s_vsa or "Supply" in s_vsa: vsa_confirmed = True
+            if "SOW" in w_vsa or "Demand" in w_vsa: vsa_confirmed = True
+            
+            if vsa_confirmed:
+                order = ['EUR', 'GBP', 'AUD', 'NZD', 'USD', 'CAD', 'CHF', 'JPY']
+                try:
+                    if order.index(c1) < order.index(c2): pair, action = f"{c1}{c2}", "BUY"
+                    else: pair, action = f"{c2}{c1}", "SELL"
+                    
+                    st.success(f"✅ **{action} {pair}** | Double Confluence 🚀")
+                    st.write(f"**Smart Money Footprint:** {c1} ({s_vsa}) vs {c2} ({w_vsa})")
+                    found = True
+                except: pass
                 
-                # Check VSA context
-                vsa_context = f" (VSA: {s['VSA']})" if s['VSA'] != "Neutral" else ""
-                st.success(f"✅ **{action} {pair}** | Strength: {s['Score']} vs {w['Score']}{vsa_context}")
-                found = True
-            except: pass
-    if not found: st.warning("Filhal koi high-probability confluence setup nahi mila.")
+    if not found: st.warning("Filhal strict criteria (Technicals + VSA) par koi trade setup nahi mila. Market ka wait karein.")
 
 # --- 4. NEWS ---
 st.markdown("---")
