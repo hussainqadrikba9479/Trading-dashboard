@@ -70,7 +70,6 @@ def get_market_data(symbols_dict):
             rsi_d = calc_rsi(df_d['Close']).iloc[-1]
             close_h4, sma20_h4 = df_h4['Close'].iloc[-1], df_h4['Close'].rolling(20).mean().iloc[-1]
             
-            # Volume Check (Placeholder for user logic)
             vol_d = df_d['Volume'].iloc[-1]
             avg_vol = df_d['Volume'].rolling(10).mean().iloc[-1]
             vol_status = "High" if vol_d > avg_vol * 1.5 else "Normal"
@@ -121,18 +120,16 @@ st.subheader("📈 Global Commodities & Indices")
 df_other = get_market_data(commodities_indices)
 st.dataframe(df_other.style.map(style_score, subset=['Master Score']), use_container_width=True)
 
-# --- Recommendations (Corrected Naming) ---
+# --- Recommendations ---
 st.markdown("---")
 st.subheader("🎯 Trade Recommendations")
 if not df_fx.empty:
     strong = df_fx[df_fx['Master Score'] >= 8]
     weak = df_fx[df_fx['Master Score'] <= 3]
     
-    # Currency Pair Naming Fix (e.g., USDJPY instead of JPYUSD)
     for _, s in strong.iterrows():
         for _, w in weak.iterrows():
             c1, c2 = s['Instrument'], w['Instrument']
-            # Common Forex Order: EUR > GBP > AUD > NZD > USD > CAD > CHF > JPY
             order = ['EUR', 'GBP', 'AUD', 'NZD', 'USD', 'CAD', 'CHF', 'JPY']
             try:
                 if order.index(c1) < order.index(c2):
@@ -141,7 +138,7 @@ if not df_fx.empty:
                     st.success(f"✅ **SELL {c2}{c1}** (Strong Confluence)")
             except: pass
 
-# --- News Section ---
+# --- News Section (Time Fixed) ---
 st.markdown("---")
 st.subheader("🚨 High Impact News (This Week)")
 @st.cache_data(ttl=600)
@@ -149,8 +146,28 @@ def get_news():
     try:
         url = "https://nfs.faireconomy.media/ff_calendar_thisweek.json"
         data = requests.get(url, timeout=10).json()
+        news_found = False
+        
         for event in data:
             if event.get('impact') == 'High':
-                st.markdown(f"<div class='news-card'><b>🔴 {event['country']} - {event['title']}</b><br><small>Forecast: {event.get('forecast', '-')} | Previous: {event.get('previous', '-')}</small></div>", unsafe_allow_html=True)
+                try:
+                    # Time conversion logic restored
+                    dt_obj = datetime.fromisoformat(event['date'])
+                    pkt_dt = dt_obj.astimezone(pkt_timezone)
+                    
+                    if pkt_dt.date() >= now_pkt.date():
+                        display_date = pkt_dt.strftime("%d %b")
+                        display_time = pkt_dt.strftime("%I:%M %p")
+                        
+                        st.markdown(f"""
+                            <div class='news-card'>
+                                <b>🔴 {event['country']} - {event['title']}</b><br>
+                                <small>Date: {display_date} | Time: {display_time} (PKT) | Forecast: {event.get('forecast', '-')} | Previous: {event.get('previous', '-')}</small>
+                            </div>
+                        """, unsafe_allow_html=True)
+                        news_found = True
+                except: pass
+        if not news_found:
+            st.info("Is hafte mazeed koi High Impact news nahi hai.")
     except: st.error("News load nahi ho sakin.")
 get_news()
