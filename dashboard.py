@@ -17,9 +17,9 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-st.title("🦅 Global Trading Terminal (VSA Powered)")
+st.title("🦅 Global Trading Terminal (VSA + Gold Edition)")
 
-# --- Mode Selector (The Magic Toggle) ---
+# --- Mode Selector ---
 st.markdown("### ⚙️ Select Trading Engine")
 trading_mode = st.radio("", ["Intraday (H1 + M30)", "Swing Trading (D1 + H4)"], horizontal=True)
 
@@ -41,12 +41,17 @@ def load_cot_data():
 
 cot_df = load_cot_data()
 if isinstance(cot_df, pd.DataFrame):
-    st.dataframe(cot_df.head(12), use_container_width=True, hide_index=True)
+    st.dataframe(cot_df.head(15), use_container_width=True, hide_index=True)
 else:
     st.error(f"⚠️ COT File Load Error: {cot_df}")
 
 # --- 2. MARKET ANALYSIS ENGINE ---
-futures_symbols = {'USD': 'DX-Y.NYB', 'EUR': '6E=F', 'GBP': '6B=F', 'JPY': '6J=F', 'AUD': '6A=F', 'CAD': '6C=F', 'CHF': '6S=F'}
+# Gold (GC=F) added to the symbols list
+futures_symbols = {
+    'USD': 'DX-Y.NYB', 'EUR': '6E=F', 'GBP': '6B=F', 
+    'JPY': '6J=F', 'AUD': '6A=F', 'CAD': '6C=F', 
+    'CHF': '6S=F', 'GOLD': 'GC=F'
+}
 
 def calc_rsi(series, period=14):
     delta = series.diff()
@@ -60,33 +65,29 @@ def get_market_data(symbols_dict, mode):
     data_list = []
     for name, ticker in symbols_dict.items():
         try:
-            # Set timeframes based on selected mode
             if mode == "Intraday (H1 + M30)":
-                df_htf = yf.download(ticker, period="1mo", interval="1h", progress=False)   # HTF = H1
-                df_ltf = yf.download(ticker, period="1mo", interval="30m", progress=False)  # LTF = M30
+                df_htf = yf.download(ticker, period="1mo", interval="1h", progress=False)
+                df_ltf = yf.download(ticker, period="1mo", interval="30m", progress=False)
                 htf_label, ltf_label = "H1", "M30"
             else:
-                df_htf = yf.download(ticker, period="2mo", interval="1d", progress=False)   # HTF = D1
-                df_ltf = yf.download(ticker, period="5d", interval="1h", progress=False)    # LTF = H4 (approx)
+                df_htf = yf.download(ticker, period="2mo", interval="1d", progress=False)
+                df_ltf = yf.download(ticker, period="5d", interval="1h", progress=False)
                 htf_label, ltf_label = "D1", "H4"
                 
             if df_htf.empty or df_ltf.empty: continue
             if isinstance(df_htf.columns, pd.MultiIndex): df_htf.columns = df_htf.columns.droplevel(1)
             if isinstance(df_ltf.columns, pd.MultiIndex): df_ltf.columns = df_ltf.columns.droplevel(1)
 
-            # HTF Technicals (Trend Bias)
             close_htf = df_htf['Close'].iloc[-1]
             sma20_htf = df_htf['Close'].rolling(20).mean().iloc[-1]
             rsi_htf = calc_rsi(df_htf['Close']).iloc[-1]
             htf_trend = "UP" if close_htf > sma20_htf else "DOWN"
 
-            # LTF Technicals (Execution Setup)
             close_ltf = df_ltf['Close'].iloc[-1]
             prev_close_ltf = df_ltf['Close'].iloc[-2]
             sma20_ltf = df_ltf['Close'].rolling(20).mean().iloc[-1]
             ltf_trend = "UP" if close_ltf > sma20_ltf else "DOWN"
             
-            # Master Score
             score = 5
             if htf_trend == "UP" and ltf_trend == "UP": score = 9
             elif htf_trend == "DOWN" and ltf_trend == "DOWN": score = 1
@@ -96,10 +97,8 @@ def get_market_data(symbols_dict, mode):
             if rsi_htf > 70: score -= 1 
             if rsi_htf < 30: score += 1 
 
-            # --- VSA LOGIC (Applied on LTF Timeframe) ---
             high, low, vol = df_ltf['High'].iloc[-1], df_ltf['Low'].iloc[-1], df_ltf['Volume'].iloc[-1]
             prev_vol, prev_prev_vol = df_ltf['Volume'].iloc[-2], df_ltf['Volume'].iloc[-3]
-            
             avg_vol = df_ltf['Volume'].rolling(20).mean().iloc[-1]
             spread = high - low
             avg_spread = (df_ltf['High'] - df_ltf['Low']).rolling(20).mean().iloc[-1]
@@ -138,7 +137,7 @@ def style_score(val):
 
 st.dataframe(df_fx.style.map(style_score, subset=['Score']), use_container_width=True, hide_index=True)
 
-# --- 3. STRICT RECOMMENDATIONS SECTION ---
+# --- 3. RECOMMENDATIONS SECTION ---
 st.markdown("---")
 st.subheader("🎯 Refined Trade Setups (Score + Volume Locked)")
 if not df_fx.empty:
@@ -146,7 +145,6 @@ if not df_fx.empty:
     weak = df_fx[df_fx['Score'] <= 3]
     found = False
     
-    # Get the correct VSA column name dynamically based on mode
     vsa_col = 'M30 VSA' if trading_mode == "Intraday (H1 + M30)" else 'H4 VSA'
     
     for _, s in strong.iterrows():
@@ -162,17 +160,22 @@ if not df_fx.empty:
             if "SOW" in w_vsa or "Demand" in w_vsa: vsa_confirmed = True
             
             if vsa_confirmed:
-                order = ['EUR', 'GBP', 'AUD', 'NZD', 'USD', 'CAD', 'CHF', 'JPY']
-                try:
-                    if order.index(c1) < order.index(c2): pair, action = f"{c1}{c2}", "BUY"
-                    else: pair, action = f"{c2}{c1}", "SELL"
-                    
-                    st.success(f"⚡ **{action} {pair}** | Double Confluence 🚀")
-                    st.write(f"**Smart Money Footprint:** {c1} ({s_vsa}) vs {c2} ({w_vsa})")
-                    found = True
-                except: pass
+                # Pair logic with Gold
+                if c1 == 'GOLD' or c2 == 'GOLD':
+                    pair = "GOLD/USD" if (c1 == 'GOLD' or c2 == 'USD') else f"{c1}/{c2}"
+                    action = "BUY" if c1 == 'GOLD' else "SELL"
+                else:
+                    order = ['EUR', 'GBP', 'AUD', 'NZD', 'USD', 'CAD', 'CHF', 'JPY']
+                    try:
+                        if order.index(c1) < order.index(c2): pair, action = f"{c1}{c2}", "BUY"
+                        else: pair, action = f"{c2}{c1}", "SELL"
+                    except: pair, action = f"{c1}{c2}", "TRADE"
+
+                st.success(f"⚡ **{action} {pair}** | High Probability Setup")
+                st.write(f"**Footprint:** {c1} ({s_vsa}) vs {c2} ({w_vsa})")
+                found = True
                 
-    if not found: st.warning(f"Filhal {trading_mode} criteria par koi trade setup nahi mila.")
+    if not found: st.warning(f"Filhal koi trade setup nahi mila. Market observe karein.")
 
 # --- 4. NEWS ---
 st.markdown("---")
