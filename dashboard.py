@@ -11,7 +11,6 @@ st.markdown("""
     .main {background-color: #f4f6f9;}
     h1 {color: #1e3d59; font-family: 'Segoe UI', sans-serif; font-weight: bold;}
     h2, h3 {color: #ff6e40;}
-    .stDataFrame {width: 100%;}
     .caution-box {background-color: #ff9a3c; padding: 12px; border-radius: 8px; color: black; font-weight: bold; border-left: 6px solid #d35400; margin-bottom: 10px;}
     .news-box {background-color: #ffffff; padding: 15px; border-radius: 8px; box-shadow: 0px 4px 6px rgba(0,0,0,0.1); border-left: 6px solid #1e3d59;}
     </style>
@@ -20,7 +19,7 @@ st.markdown("""
 # --- 1 & 2. Title Update ---
 st.title("📊 Trading Dashboard")
 
-# --- 3. Refresh Button Fix ---
+# --- 3. Refresh Button ---
 col1, col2 = st.columns([4, 1])
 with col2:
     st.write("") 
@@ -60,7 +59,7 @@ def get_futures_data():
             df['RSI'] = calc_rsi(df['Close'])
             current_rsi = df['RSI'].iloc[-1]
             
-            # --- 7. Basic Structure (Will upgrade to HH/HL later) ---
+            # --- 7. Basic Structure ---
             sma_20 = df['Close'].rolling(20).mean().iloc[-1]
             structure = "Trending" if close_price > sma_20 else "Volatile" 
             
@@ -100,7 +99,7 @@ def get_futures_data():
 
 df = get_futures_data()
 
-# --- 9. Green >= 8, Red <= 4 ---
+# --- 9. Colors ---
 def highlight_cells(val):
     if isinstance(val, (int, float)):
         if val >= 8: return 'background-color: #2ecc71; color: black; font-weight: bold'
@@ -111,25 +110,22 @@ def highlight_remarks(val):
     if "⚠️" in str(val): return 'color: #c0392b; font-weight: bold'
     return ''
 
-# --- 4. Analysis Phase & Fit Window ---
+# --- 4. Analysis Phase (Fixed Table Width) ---
 st.markdown("---")
 st.subheader("🔍 Analysis Phase")
-st.dataframe(
-    df.style.map(highlight_cells, subset=['Strength Score']).map(highlight_remarks, subset=['Remarks']), 
-    use_container_width=True # Ensure columns don't exceed window
-)
+# st.dataframe ki jagah ab hum st.table use kar rahe hain taake width compact rahe
+st.table(df.style.map(highlight_cells, subset=['Strength Score']).map(highlight_remarks, subset=['Remarks']))
 
 # --- 11. Recommendation Section ---
 st.markdown("---")
 st.subheader("🎯 Recommendation")
 
 if not df.empty:
-    # --- 8. Filter Logic: Buy <= 25 or Normal, Sell >= 75 or Normal ---
-    # Sirf unhi ko valid setup manein jinka RSI extreme ke against na ho
+    # --- 8. Filter Logic ---
     strong_candidates = df[(df['Strength Score'] >= 8) & (df['RSI (14)'] < 75)]
     weak_candidates = df[(df['Strength Score'] <= 4) & (df['RSI (14)'] > 25)]
     
-    # --- 12. Caution Section for Extremes ---
+    # --- 12. Caution Section ---
     extreme_strong = df[(df['Strength Score'] >= 8) & (df['RSI (14)'] >= 75)]
     extreme_weak = df[(df['Strength Score'] <= 4) & (df['RSI (14)'] <= 25)]
     
@@ -158,7 +154,7 @@ if not df.empty:
         for _, row in extreme_weak.iterrows():
             st.markdown(f"<div class='caution-box'>🚫 <b>Avoid Selling {row['Currency']} Pairs:</b> Score is Low ({row['Strength Score']}) but RSI is Oversold ({row['RSI (14)']}). Wait for Bounce.</div>", unsafe_allow_html=True)
 
-# --- 13. News Section (Placeholder for upcoming API connection) ---
+# --- 13. News Section ---
 st.markdown("---")
 st.subheader("📰 Market News & Events")
 st.markdown("""
