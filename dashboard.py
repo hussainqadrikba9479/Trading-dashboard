@@ -1,6 +1,7 @@
 import yfinance as yf
 import pandas as pd
 import streamlit as st
+import numpy as np
 import requests
 from datetime import datetime, timezone, timedelta
 
@@ -17,7 +18,7 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-st.title("🦅 Global Trading Terminal (Triple Lock Edition)")
+st.title("🦅 Master Trading Terminal (Price Action + VSA)")
 
 # --- Mode Selector ---
 st.markdown("### ⚙️ Select Trading Engine")
@@ -54,6 +55,87 @@ def get_cot_net_change(inst, df):
     except: pass
     return 0
 
+# --- HELPER FUNCTIONS FOR ADVANCED PRICE ACTION ---
+
+def calculate_angle(price_diff, periods):
+    # A simple proxy for angle/momentum. Higher absolute value = sharper angle.
+    if periods == 0: return 0
+    return price_diff / periods
+
+def analyze_market_structure(df, lookback_period=10):
+    """
+    Analyzes swings to determine trend, ranges, and breakout angles.
+    """
+    # Find recent Local Highs and Lows
+    df['Local_High'] = df['High'][(df['High'].shift(1) < df['High']) & (df['High'].shift(-1) < df['High'])]
+    df['Local_Low'] = df['Low'][(df['Low'].shift(1) > df['Low']) & (df['Low'].shift(-1) > df['Low'])]
+    
+    recent_highs = df['Local_High'].dropna().tail(3).values
+    recent_lows = df['Local_Low'].dropna().tail(3).values
+    
+    if len(recent_highs) < 3 or len(recent_lows) < 3:
+        return "Insufficient Data", 0, "Neutral"
+
+    # Evaluate Swings
+    h1, h2, h3 = recent_highs[-3], recent_highs[-2], recent_highs[-1] # h3 is most recent
+    l1, l2, l3 = recent_lows[-3], recent_lows[-2], recent_lows[-1]
+
+    structure = "➖ Range"
+    signal = "Neutral"
+    angle = 0
+    
+    # 1. RANGE LOGIC (Equal Highs/Lows)
+    # Check if highs and lows are roughly equal (within 0.1% tolerance)
+    tolerance = h1 * 0.001 
+    if (abs(h1-h2) < tolerance and abs(h2-h3) < tolerance) and (abs(l1-l2) < tolerance and abs(l2-l3) < tolerance):
+        structure = "➖ Range (Valid - 3+ Touches)"
+        # Check current price position for Range Entry
+        current_price = df['Close'].iloc[-1]
+        if current_price >= h3 * 0.999: # At Top
+             signal = "🚨 Sell at Range Top (Wait for Upthrust)"
+        elif current_price <= l3 * 1.001: # At Bottom
+             signal = "🟢 Buy at Range Bottom (Wait for Spring)"
+             
+    # 2. UPTREND LOGIC (2 Higher Highs broken)
+    elif h3 > h2 and h2 > h1 and l3 > l2 and l2 > l1:
+        structure = "📈 Uptrend Confirmed"
+        # Calculate Angle of the last break
+        angle = calculate_angle(h3 - h2, 5) # Assuming roughly 5 periods between swings for proxy
+        current_price = df['Close'].iloc[-1]
+        
+        if angle > (h1*0.0005): # Sharp Angle Threshold
+            if current_price < h3 and current_price > l3: # In Pullback Phase
+                 signal = "✅ Buy Pullback (Trend Continuation)"
+        else:
+            signal = "⚠️ Uptrend (Weak Angle - Caution)"
+
+    # 3. DOWNTREND LOGIC (2 Lower Lows broken)
+    elif h3 < h2 and h2 < h1 and l3 < l2 and l2 < l1:
+        structure = "📉 Downtrend Confirmed"
+        angle = calculate_angle(l2 - l3, 5)
+        current_price = df['Close'].iloc[-1]
+        
+        if angle > (l1*0.0005):
+            if current_price > l3 and current_price < h3: # In Pullback Phase
+                 signal = "❌ Sell Pullback (Trend Continuation)"
+        else:
+            signal = "⚠️ Downtrend (Weak Angle - Caution)"
+            
+    # 4. BREAKOUT/PULLBACK SAFE ENTRY LOGIC
+    # Range Breakout Up -> Pullback
+    elif (h2 <= h1 + tolerance) and (h3 > h1): # Broke resistance
+        structure = "🚀 Upward Breakout Phase"
+        if df['Close'].iloc[-1] <= h1 * 1.002 and df['Close'].iloc[-1] >= h1 * 0.998: # Pulling back to broken resistance
+             signal = "🟢 Safe Buy (Breakout Pullback)"
+             
+    # Range Breakdown Down -> Pullback
+    elif (l2 >= l1 - tolerance) and (l3 < l1): # Broke support
+        structure = "🩸 Downward Breakdown Phase"
+        if df['Close'].iloc[-1] >= l1 * 0.998 and df['Close'].iloc[-1] <= l1 * 1.002: # Pulling back to broken support
+             signal = "🚨 Safe Sell (Breakdown Pullback)"
+
+    return structure, angle, signal
+
 # --- 2. MARKET ANALYSIS ENGINE ---
 futures_symbols = {
     'USD': 'DX-Y.NYB', 'GOLD': 'GC=F', 'EUR': '6E=F', 'GBP': '6B=F', 
@@ -73,79 +155,67 @@ def get_market_data(symbols_dict, mode):
     for name, ticker in symbols_dict.items():
         try:
             if mode == "Intraday (H1 + M30)":
-                df_htf = yf.download(ticker, period="1mo", interval="1h", progress=False)
+                df_htf = yf.download(ticker, period="2mo", interval="1h", progress=False)
                 df_ltf = yf.download(ticker, period="1mo", interval="30m", progress=False)
                 htf_label, ltf_label = "H1", "M30"
             else:
-                df_htf = yf.download(ticker, period="2mo", interval="1d", progress=False)
-                df_ltf = yf.download(ticker, period="5d", interval="1h", progress=False)
+                df_htf = yf.download(ticker, period="6mo", interval="1d", progress=False)
+                df_ltf = yf.download(ticker, period="1mo", interval="1h", progress=False)
                 htf_label, ltf_label = "D1", "H4"
                 
             if df_htf.empty or df_ltf.empty: continue
             if isinstance(df_htf.columns, pd.MultiIndex): df_htf.columns = df_htf.columns.droplevel(1)
             if isinstance(df_ltf.columns, pd.MultiIndex): df_ltf.columns = df_ltf.columns.droplevel(1)
 
+            # Technicals
             close_htf = df_htf['Close'].iloc[-1]
             sma20_htf = df_htf['Close'].rolling(20).mean().iloc[-1]
             rsi_htf = calc_rsi(df_htf['Close']).iloc[-1]
             htf_trend = "UP" if close_htf > sma20_htf else "DOWN"
 
             close_ltf = df_ltf['Close'].iloc[-1]
-            prev_close_ltf = df_ltf['Close'].iloc[-2]
             sma20_ltf = df_ltf['Close'].rolling(20).mean().iloc[-1]
             ltf_trend = "UP" if close_ltf > sma20_ltf else "DOWN"
             
+            # --- GET PRICE ACTION STRUCTURE & SIGNAL ---
+            pa_structure, pa_angle, pa_signal = analyze_market_structure(df_ltf.copy(), lookback_period=10)
+
+            # Score Logic
             score = 5
             if htf_trend == "UP" and ltf_trend == "UP": score = 9
             elif htf_trend == "DOWN" and ltf_trend == "DOWN": score = 1
             elif htf_trend == "UP" and ltf_trend == "DOWN": score = 6
             elif htf_trend == "DOWN" and ltf_trend == "UP": score = 4
-            
             if rsi_htf > 70: score -= 1 
             if rsi_htf < 30: score += 1 
 
-            # --- ADVANCED VSA LOGIC (Breakouts & Tests Added) ---
-            high, low, vol = df_ltf['High'].iloc[-1], df_ltf['Low'].iloc[-1], df_ltf['Volume'].iloc[-1]
-            prev_vol, prev_prev_vol = df_ltf['Volume'].iloc[-2], df_ltf['Volume'].iloc[-3]
+            # --- VSA VOLUME CONFIRMATION ---
+            vol = df_ltf['Volume'].iloc[-1]
+            prev_vol = df_ltf['Volume'].iloc[-2]
             avg_vol = df_ltf['Volume'].rolling(20).mean().iloc[-1]
-            spread = high - low
-            avg_spread = (df_ltf['High'] - df_ltf['Low']).rolling(20).mean().iloc[-1]
-            close_pos = (close_ltf - low) / spread if spread > 0 else 0.5
             
-            vsa_signal = "Neutral"
-            
-            # 1. Effort to Rise (Bullish Breakout over MA)
-            if (close_ltf > sma20_ltf) and (prev_close_ltf <= sma20_ltf) and (spread > avg_spread) and (vol > avg_vol * 1.2) and (close_pos > 0.7):
-                vsa_signal = "🚀 Breakout (Effort to Rise)"
-            # 2. Effort to Fall (Bearish Breakout under MA)
-            elif (close_ltf < sma20_ltf) and (prev_close_ltf >= sma20_ltf) and (spread > avg_spread) and (vol > avg_vol * 1.2) and (close_pos < 0.3):
-                vsa_signal = "🩸 Breakdown (Effort to Fall)"
-            # 3. Successful Test (Pullback to MA in Uptrend)
-            elif (close_ltf > sma20_ltf) and (low <= sma20_ltf * 1.002) and (spread < avg_spread) and (vol < prev_vol):
-                vsa_signal = "✅ Test at MA (Buy Pullback)"
-            # 4. Successful Test (Pullback to MA in Downtrend)
-            elif (close_ltf < sma20_ltf) and (high >= sma20_ltf * 0.998) and (spread < avg_spread) and (vol < prev_vol):
-                vsa_signal = "❌ Test at MA (Sell Pullback)"
-            # Existing VSA signals
-            elif (close_ltf > prev_close_ltf) and (spread > avg_spread) and (close_pos < 0.3) and (vol > avg_vol * 1.2):
-                vsa_signal = "🚨 Upthrust (SOW)"
-            elif (close_ltf < prev_close_ltf) and (spread > avg_spread) and (close_pos > 0.7) and (vol > avg_vol * 1.2):
-                vsa_signal = "🟢 Shakeout (SOS)"
-            elif (close_ltf > prev_close_ltf) and (spread < avg_spread) and (vol < prev_vol) and (vol < prev_prev_vol):
-                vsa_signal = "📉 No Demand"
-            elif (close_ltf < prev_close_ltf) and (spread < avg_spread) and (vol < prev_vol) and (vol < prev_prev_vol):
-                vsa_signal = "📈 No Supply"
+            vol_confirm = "No Volume Confirm"
+            if "Breakout" in pa_structure or "Breakdown" in pa_structure:
+                # Need high volume on break, low on pullback
+                if vol < prev_vol and vol < avg_vol: vol_confirm = "✅ Pullback Vol Confirmed"
+            elif "Pullback" in pa_signal:
+                if vol < prev_vol: vol_confirm = "✅ No Supply/Demand Confirmed"
+            elif "Range" in pa_signal:
+                if vol > avg_vol * 1.2: vol_confirm = "🚨 Trap Vol (Spring/Upthrust)"
 
             data_list.append({
-                'Instrument': name, f'{htf_label} Trend': htf_trend, f'{ltf_label} Trend': ltf_trend, 
-                f'RSI ({htf_label})': round(rsi_htf, 2), f'{ltf_label} VSA': vsa_signal, 'Score': score
+                'Instrument': name, 
+                f'{ltf_label} Structure': pa_structure, 
+                f'PA Signal': pa_signal,
+                f'Volume Confirm': vol_confirm, 
+                'Score': score
             })
         except: pass
     return pd.DataFrame(data_list)
 
 # Tables UI
 st.markdown("---")
-st.subheader(f"🔍 Analysis Phase ({trading_mode})")
+st.subheader(f"🔍 Price Action Analysis Phase ({trading_mode})")
 df_fx = get_market_data(futures_symbols, trading_mode)
 
 def style_score(val):
@@ -153,52 +223,68 @@ def style_score(val):
     if val <= 3: return 'background-color: #e74c3c; color: white; font-weight: bold'
     return ''
 
-st.dataframe(df_fx.style.map(style_score, subset=['Score']), use_container_width=True, hide_index=True)
+def style_structure(val):
+    if 'Uptrend Confirmed' in str(val) or 'Safe Buy' in str(val) or 'Buy Pullback' in str(val) or '✅' in str(val): return 'color: #2ecc71; font-weight: bold'
+    if 'Downtrend Confirmed' in str(val) or 'Safe Sell' in str(val) or 'Sell Pullback' in str(val) or '🚨' in str(val): return 'color: #e74c3c; font-weight: bold'
+    return ''
 
-# --- 3. TRIPLE-LOCKED RECOMMENDATIONS SECTION ---
+st.dataframe(df_fx.style.map(style_score, subset=['Score'])
+             .map(style_structure, subset=[c for c in df_fx.columns if 'Structure' in c][0])
+             .map(style_structure, subset=['PA Signal', 'Volume Confirm']), 
+             use_container_width=True, hide_index=True)
+
+# --- 3. MASTER CONFLUENCE RECOMMENDATIONS SECTION ---
 st.markdown("---")
-st.subheader("🎯 Triple-Locked Setups (Score + VSA + COT)")
+st.subheader("🎯 Master Setups (Structure + Strength + COT + Volume)")
 if not df_fx.empty:
     strong = df_fx[df_fx['Score'] >= 8]
     weak = df_fx[df_fx['Score'] <= 3]
     found = False
-    vsa_col = 'M30 VSA' if trading_mode == "Intraday (H1 + M30)" else 'H4 VSA'
     
     for _, s in strong.iterrows():
         for _, w in weak.iterrows():
             c1, c2 = s['Instrument'], w['Instrument']
-            s_vsa, w_vsa = str(s[vsa_col]), str(w[vsa_col])
             
-            # Rule 1: No VSA Contradiction
-            if any(x in s_vsa for x in ["SOW", "Demand", "Breakdown", "❌"]): continue 
-            if any(x in w_vsa for x in ["SOS", "Supply", "Breakout", "✅"]): continue 
+            s_signal, s_vol = str(s['PA Signal']), str(s['Volume Confirm'])
+            w_signal, w_vol = str(w['PA Signal']), str(w['Volume Confirm'])
             
-            # Rule 2: VSA Confirmation Needed (Including new setups)
-            vsa_confirmed = False
-            if any(x in s_vsa for x in ["SOS", "Supply", "Breakout", "✅"]): vsa_confirmed = True
-            if any(x in w_vsa for x in ["SOW", "Demand", "Breakdown", "❌"]): vsa_confirmed = True
+            # Rule 1: Master Confluence Check
+            # We want C1 to be in a BUY setup, OR C2 to be in a SELL setup (with volume confirmation)
+            setup_valid = False
+            setup_desc = ""
             
-            # Rule 3: COT Data Lock
+            if ("Buy" in s_signal or "Spring" in s_signal) and "✅" in s_vol:
+                setup_valid = True
+                setup_desc = f"{c1} is providing a Buy Setup."
+            elif ("Sell" in w_signal or "Upthrust" in w_signal) and "✅" in w_vol:
+                setup_valid = True
+                setup_desc = f"{c2} is providing a Sell Setup."
+                
+            # Avoid conflicting setups
+            if "Sell" in s_signal or "Buy" in w_signal:
+                continue
+
+            # Rule 2: COT Data Lock
             c1_cot_bias = get_cot_net_change(c1, cot_df) 
             c2_cot_bias = get_cot_net_change(c2, cot_df) 
             
             if c1_cot_bias <= 0 or c2_cot_bias >= 0:
                 continue 
             
-            if vsa_confirmed:
+            if setup_valid:
                 order = ['GOLD', 'EUR', 'GBP', 'AUD', 'NZD', 'USD', 'CAD', 'CHF', 'JPY']
                 try:
                     if order.index(c1) < order.index(c2): pair, action = f"{c1}{c2}", "BUY"
                     else: pair, action = f"{c2}{c1}", "SELL"
                     
-                    st.success(f"⚡ **{action} {pair}** | Triple Confluence 🚀🚀🚀")
-                    st.write(f"**VSA Match:** {c1} ({s_vsa}) vs {c2} ({w_vsa})")
-                    st.write(f"**COT Bias (Net Change):** 📈 {c1} (+{c1_cot_bias}) | 📉 {c2} ({c2_cot_bias})")
+                    st.success(f"⚡ **{action} {pair}** | Institutional Master Confluence 🚀🚀🚀")
+                    st.write(f"**Actionable Logic:** {setup_desc}")
+                    st.write(f"**COT Alignment:** 📈 Institutions are Long {c1} (+{c1_cot_bias}) | 📉 Short {c2} ({c2_cot_bias})")
                     found = True
                 except: pass
                 
     if not found: 
-        st.warning(f"Filhal {trading_mode} mode mein koi TRIPLE-LOCKED trade nahi. Breakouts ya Tests ka wait karein.")
+        st.warning(f"Filhal {trading_mode} mode mein koi PERFECT MASTER trade nahi hai. Market structure ban'ne ka wait karein.")
 
 # --- 4. NEWS ---
 st.markdown("---")
