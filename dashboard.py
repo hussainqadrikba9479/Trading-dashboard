@@ -6,42 +6,45 @@ import requests
 from datetime import datetime, timezone, timedelta
 
 # --- Dashboard Setup ---
-st.set_page_config(page_title="Trading Dashboard", layout="centered")
+st.set_page_config(page_title="Global Trading Terminal", layout="centered")
 st.markdown("""
     <style>
     .main {background-color: #f4f6f9;}
-    .stMetric {background-color: #ffffff; padding: 10px; border-radius: 10px; box-shadow: 0px 2px 4px rgba(0,0,0,0.05);}
-    .sentiment-card {padding: 10px; border-radius: 8px; margin-bottom: 5px; color: white; font-weight: bold; text-align: center;}
+    .sentiment-card {padding: 10px; border-radius: 8px; margin-bottom: 5px; color: white; font-weight: bold; text-align: center; font-size: 0.8rem;}
     .hawkish {background-color: #2ecc71;}
     .dovish {background-color: #e74c3c;}
     .neutral {background-color: #95a5a6;}
-    .news-card {border-left: 6px solid #e74c3c; background-color: #ffffff; padding: 15px; border-radius: 8px; box-shadow: 0px 4px 6px rgba(0,0,0,0.1); margin-bottom: 10px;}
+    .news-card {border-left: 6px solid #e74c3c; background-color: #ffffff; padding: 12px; border-radius: 8px; box-shadow: 0px 4px 6px rgba(0,0,0,0.1); margin-bottom: 10px;}
     </style>
 """, unsafe_allow_html=True)
 
-st.title("📊 Master Trading Dashboard")
+st.title("🦅 Global Trading Terminal")
 
 # --- Pakistan Time ---
 pkt_timezone = timezone(timedelta(hours=5))
 now_pkt = datetime.now(pkt_timezone)
-pkt_time = now_pkt.strftime('%I:%M:%S %p')
-st.info(f"🕒 **Last Updated:** {pkt_time} (PKT)")
+st.info(f"🕒 **Last Updated:** {now_pkt.strftime('%I:%M:%S %p')} (PKT)")
 
-# --- Central Bank Bias (Fundamental View) ---
+# --- Central Bank Sentiment ---
 cb_sentiment = {
-    'USD': {'Bias': 'Hawkish/Neutral', 'Policy': 'High Rates', 'Color': 'hawkish'},
-    'EUR': {'Bias': 'Dovish', 'Policy': 'Rate Cuts Starting', 'Color': 'dovish'},
-    'GBP': {'Bias': 'Neutral', 'Policy': 'Stable', 'Color': 'neutral'},
-    'JPY': {'Bias': 'Hawkish', 'Policy': 'Ending Negative Rates', 'Color': 'hawkish'},
-    'AUD': {'Bias': 'Neutral', 'Policy': 'Data Dependent', 'Color': 'neutral'},
-    'CAD': {'Bias': 'Neutral/Dovish', 'Policy': 'Monitoring Inflation', 'Color': 'neutral'},
-    'CHF': {'Bias': 'Dovish', 'Policy': 'Inflation Controlled', 'Color': 'dovish'}
+    'USD': {'Bias': 'Hawkish/Neutral', 'Color': 'hawkish'},
+    'EUR': {'Bias': 'Dovish', 'Color': 'dovish'},
+    'GBP': {'Bias': 'Neutral', 'Color': 'neutral'},
+    'JPY': {'Bias': 'Hawkish', 'Color': 'hawkish'},
+    'AUD': {'Bias': 'Neutral', 'Color': 'neutral'},
+    'CAD': {'Bias': 'Neutral/Dovish', 'Color': 'neutral'},
+    'CHF': {'Bias': 'Dovish', 'Color': 'dovish'}
 }
 
-# --- Data Fetching Logic ---
+# --- Tickers Mapping ---
 futures_symbols = {
     'USD': 'DX-Y.NYB', 'EUR': '6E=F', 'GBP': '6B=F', 
     'JPY': '6J=F', 'AUD': '6A=F', 'CAD': '6C=F', 'CHF': '6S=F'
+}
+
+commodities_indices = {
+    'GOLD': 'GC=F', 'CRUDE OIL': 'CL=F', 'BTC': 'BTC-USD',
+    'S&P 500': 'ES=F', 'DOW 30': 'YM=F', 'NASDAQ': 'NQ=F'
 }
 
 def calc_rsi(series, period=14):
@@ -52,140 +55,102 @@ def calc_rsi(series, period=14):
     return 100 - (100 / (1 + rs))
 
 @st.cache_data(ttl=300)
-def get_merged_data():
+def get_market_data(symbols_dict):
     data_list = []
-    for currency, ticker in futures_symbols.items():
+    for name, ticker in symbols_dict.items():
         try:
             df_d = yf.download(ticker, period="1mo", interval="1d", progress=False)
             df_h4 = yf.download(ticker, period="5d", interval="1h", progress=False) 
             
             if df_d.empty or df_h4.empty: continue
-            
             if isinstance(df_d.columns, pd.MultiIndex): df_d.columns = df_d.columns.droplevel(1)
             if isinstance(df_h4.columns, pd.MultiIndex): df_h4.columns = df_h4.columns.droplevel(1)
 
-            close_d = df_d['Close'].iloc[-1]
-            sma20_d = df_d['Close'].rolling(20).mean().iloc[-1]
+            close_d, sma20_d = df_d['Close'].iloc[-1], df_d['Close'].rolling(20).mean().iloc[-1]
             rsi_d = calc_rsi(df_d['Close']).iloc[-1]
+            close_h4, sma20_h4 = df_h4['Close'].iloc[-1], df_h4['Close'].rolling(20).mean().iloc[-1]
             
-            close_h4 = df_h4['Close'].iloc[-1]
-            sma20_h4 = df_h4['Close'].rolling(20).mean().iloc[-1]
-            
+            # Volume Check (Placeholder for user logic)
+            vol_d = df_d['Volume'].iloc[-1]
+            avg_vol = df_d['Volume'].rolling(10).mean().iloc[-1]
+            vol_status = "High" if vol_d > avg_vol * 1.5 else "Normal"
+
             daily_trend = "UP" if close_d > sma20_d else "DOWN"
             h4_trend = "UP" if close_h4 > sma20_h4 else "DOWN"
             
-            observation = "Ranging"
             score = 5
-            
-            if daily_trend == "UP" and h4_trend == "UP":
-                observation = "Strong Bullish"
-                score = 9
-            elif daily_trend == "DOWN" and h4_trend == "DOWN":
-                observation = "Strong Bearish"
-                score = 1
-            elif daily_trend == "UP" and h4_trend == "DOWN":
-                observation = "Pullback (Daily Bullish)"
-                score = 6
-            elif daily_trend == "DOWN" and h4_trend == "UP":
-                observation = "Correction (Daily Bearish)"
-                score = 4
+            if daily_trend == "UP" and h4_trend == "UP": score = 9
+            elif daily_trend == "DOWN" and h4_trend == "DOWN": score = 1
+            elif daily_trend == "UP" and h4_trend == "DOWN": score = 6
+            elif daily_trend == "DOWN" and h4_trend == "UP": score = 4
             
             if rsi_d > 70: score -= 1 
             if rsi_d < 30: score += 1 
 
             data_list.append({
-                'Currency': currency,
-                'Daily Trend': daily_trend,
+                'Instrument': name,
+                'D1 Trend': daily_trend,
                 'H4 Trend': h4_trend,
-                'Observation': observation,
                 'RSI (D1)': round(rsi_d, 2),
-                'Master Strength': score
+                'Volume': vol_status,
+                'Master Score': score
             })
         except: pass
-    
-    res = pd.DataFrame(data_list)
-    res.index = np.arange(1, len(res) + 1)
-    return res
+    return pd.DataFrame(data_list)
 
-# --- 1. Central Bank View ---
-st.subheader("🏛️ Central Bank Sentiment (Fundamental View)")
+# --- UI Components ---
+st.subheader("🏛️ Central Bank Sentiment")
 cols = st.columns(len(cb_sentiment))
 for i, (curr, info) in enumerate(cb_sentiment.items()):
     with cols[i]:
-        st.markdown(f"""
-            <div class='sentiment-card {info['Color']}'>
-                {curr}<br><small>{info['Bias']}</small>
-            </div>
-        """, unsafe_allow_html=True)
+        st.markdown(f"<div class='sentiment-card {info['Color']}'>{curr}<br><small>{info['Bias']}</small></div>", unsafe_allow_html=True)
 
-# --- 2. Analysis Phase ---
+# Analysis Tables
 st.markdown("---")
-st.subheader("🔍 Analysis Phase (Daily + H4 Confluence)")
-df = get_merged_data()
+st.subheader("🔍 Currency Futures Analysis (D1 + H4)")
+df_fx = get_market_data(futures_symbols)
 
-def highlight_score(val):
+def style_score(val):
     if val >= 8: return 'background-color: #2ecc71; color: black; font-weight: bold'
     if val <= 3: return 'background-color: #e74c3c; color: white; font-weight: bold'
     return ''
 
-st.dataframe(df.style.map(highlight_score, subset=['Master Strength']), use_container_width=True)
+st.dataframe(df_fx.style.map(style_score, subset=['Master Score']), use_container_width=True)
 
-# --- 3. Recommendations ---
+st.subheader("📈 Global Commodities & Indices")
+df_other = get_market_data(commodities_indices)
+st.dataframe(df_other.style.map(style_score, subset=['Master Score']), use_container_width=True)
+
+# --- Recommendations (Corrected Naming) ---
 st.markdown("---")
-st.subheader("🎯 Recommendations")
-if not df.empty:
-    strong = df[df['Master Strength'] >= 8]
-    weak = df[df['Master Strength'] <= 3]
+st.subheader("🎯 Trade Recommendations")
+if not df_fx.empty:
+    strong = df_fx[df_fx['Master Score'] >= 8]
+    weak = df_fx[df_fx['Master Score'] <= 3]
     
-    if not strong.empty and not weak.empty:
-        for _, s in strong.iterrows():
-            for _, w in weak.iterrows():
-                st.success(f"✅ **High Probability Setup: {s['Currency']}{w['Currency']} (BUY)**")
-                st.write(f"Reason: Both D1/H4 are {s['Observation']} and Central Bank favors {s['Currency']}.")
-    else:
-        st.warning("Market is currently mixed. No High Probability Confluence found.")
+    # Currency Pair Naming Fix (e.g., USDJPY instead of JPYUSD)
+    for _, s in strong.iterrows():
+        for _, w in weak.iterrows():
+            c1, c2 = s['Instrument'], w['Instrument']
+            # Common Forex Order: EUR > GBP > AUD > NZD > USD > CAD > CHF > JPY
+            order = ['EUR', 'GBP', 'AUD', 'NZD', 'USD', 'CAD', 'CHF', 'JPY']
+            try:
+                if order.index(c1) < order.index(c2):
+                    st.success(f"✅ **BUY {c1}{c2}** (Strong Confluence)")
+                else:
+                    st.success(f"✅ **SELL {c2}{c1}** (Strong Confluence)")
+            except: pass
 
-# --- 4. Live News API (Fixed Timezone & Range) ---
+# --- News Section ---
 st.markdown("---")
-st.subheader("🚨 Upcoming High Impact News (This Week)")
-
-@st.cache_data(ttl=600) 
-def get_forex_news():
+st.subheader("🚨 High Impact News (This Week)")
+@st.cache_data(ttl=600)
+def get_news():
     try:
         url = "https://nfs.faireconomy.media/ff_calendar_thisweek.json"
-        response = requests.get(url, timeout=10)
-        data = response.json()
-        
-        news_found = False
-        
+        data = requests.get(url, timeout=10).json()
         for event in data:
-            impact = event.get('impact', '')
-            
-            # Sirf High Impact (Red) News
-            if impact == 'High':
-                try:
-                    # US Time ko PKT mein convert karna
-                    dt_obj = datetime.fromisoformat(event['date'])
-                    pkt_dt = dt_obj.astimezone(pkt_timezone)
-                    
-                    # Agar news aaj ki hai ya aane wale dino ki hai (guzar nahi chuki)
-                    if pkt_dt.date() >= now_pkt.date():
-                        display_date = pkt_dt.strftime("%d %b") # e.g., 22 Apr
-                        display_time = pkt_dt.strftime("%I:%M %p") # e.g., 06:30 PM
-                        
-                        st.markdown(f"""
-                            <div class='news-card'>
-                                <b>🔴 {event['country']} - {event['title']}</b><br>
-                                <small>Date: {display_date} | Time: {display_time} (PKT) | Forecast: {event.get('forecast', '-')} | Previous: {event.get('previous', '-')}</small>
-                            </div>
-                        """, unsafe_allow_html=True)
-                        news_found = True
-                except:
-                    pass
-                
-        if not news_found:
-            st.info("Is hafte mazeed koi High Impact (Red Folder) news nahi hai.")
-    except Exception as e:
-        st.error(f"Live news load hone mein masla aa raha hai. API temporary block ho sakti hai. ({e})")
-
-get_forex_news()
+            if event.get('impact') == 'High':
+                st.markdown(f"<div class='news-card'><b>🔴 {event['country']} - {event['title']}</b><br><small>Forecast: {event.get('forecast', '-')} | Previous: {event.get('previous', '-')}</small></div>", unsafe_allow_html=True)
+    except: st.error("News load nahi ho sakin.")
+get_news()
