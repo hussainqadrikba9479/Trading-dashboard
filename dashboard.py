@@ -45,17 +45,12 @@ if isinstance(cot_df, pd.DataFrame):
 else:
     st.error(f"⚠️ COT File Load Error: {cot_df}")
 
-# --- Helper: Get COT Net Change ---
 def get_cot_net_change(inst, df):
     if not isinstance(df, pd.DataFrame) or df.empty: return 0
-    search_term = inst
-    if inst == 'USD': search_term = 'USD'
-    elif inst == 'GOLD': search_term = 'Gold'
-    
+    search_term = inst if inst != 'GOLD' else 'Gold'
     try:
         match = df[df['Instrument'].astype(str).str.contains(search_term, case=False, na=False)]
-        if not match.empty:
-            return float(match['Net Change'].iloc[0])
+        if not match.empty: return float(match['Net Change'].iloc[0])
     except: pass
     return 0
 
@@ -109,6 +104,7 @@ def get_market_data(symbols_dict, mode):
             if rsi_htf > 70: score -= 1 
             if rsi_htf < 30: score += 1 
 
+            # --- ADVANCED VSA LOGIC (Breakouts & Tests Added) ---
             high, low, vol = df_ltf['High'].iloc[-1], df_ltf['Low'].iloc[-1], df_ltf['Volume'].iloc[-1]
             prev_vol, prev_prev_vol = df_ltf['Volume'].iloc[-2], df_ltf['Volume'].iloc[-3]
             avg_vol = df_ltf['Volume'].rolling(20).mean().iloc[-1]
@@ -117,7 +113,21 @@ def get_market_data(symbols_dict, mode):
             close_pos = (close_ltf - low) / spread if spread > 0 else 0.5
             
             vsa_signal = "Neutral"
-            if (close_ltf > prev_close_ltf) and (spread > avg_spread) and (close_pos < 0.3) and (vol > avg_vol * 1.2):
+            
+            # 1. Effort to Rise (Bullish Breakout over MA)
+            if (close_ltf > sma20_ltf) and (prev_close_ltf <= sma20_ltf) and (spread > avg_spread) and (vol > avg_vol * 1.2) and (close_pos > 0.7):
+                vsa_signal = "🚀 Breakout (Effort to Rise)"
+            # 2. Effort to Fall (Bearish Breakout under MA)
+            elif (close_ltf < sma20_ltf) and (prev_close_ltf >= sma20_ltf) and (spread > avg_spread) and (vol > avg_vol * 1.2) and (close_pos < 0.3):
+                vsa_signal = "🩸 Breakdown (Effort to Fall)"
+            # 3. Successful Test (Pullback to MA in Uptrend)
+            elif (close_ltf > sma20_ltf) and (low <= sma20_ltf * 1.002) and (spread < avg_spread) and (vol < prev_vol):
+                vsa_signal = "✅ Test at MA (Buy Pullback)"
+            # 4. Successful Test (Pullback to MA in Downtrend)
+            elif (close_ltf < sma20_ltf) and (high >= sma20_ltf * 0.998) and (spread < avg_spread) and (vol < prev_vol):
+                vsa_signal = "❌ Test at MA (Sell Pullback)"
+            # Existing VSA signals
+            elif (close_ltf > prev_close_ltf) and (spread > avg_spread) and (close_pos < 0.3) and (vol > avg_vol * 1.2):
                 vsa_signal = "🚨 Upthrust (SOW)"
             elif (close_ltf < prev_close_ltf) and (spread > avg_spread) and (close_pos > 0.7) and (vol > avg_vol * 1.2):
                 vsa_signal = "🟢 Shakeout (SOS)"
@@ -127,12 +137,8 @@ def get_market_data(symbols_dict, mode):
                 vsa_signal = "📈 No Supply"
 
             data_list.append({
-                'Instrument': name, 
-                f'{htf_label} Trend': htf_trend, 
-                f'{ltf_label} Trend': ltf_trend, 
-                f'RSI ({htf_label})': round(rsi_htf, 2), 
-                f'{ltf_label} VSA': vsa_signal, 
-                'Score': score
+                'Instrument': name, f'{htf_label} Trend': htf_trend, f'{ltf_label} Trend': ltf_trend, 
+                f'RSI ({htf_label})': round(rsi_htf, 2), f'{ltf_label} VSA': vsa_signal, 'Score': score
             })
         except: pass
     return pd.DataFrame(data_list)
@@ -164,19 +170,18 @@ if not df_fx.empty:
             s_vsa, w_vsa = str(s[vsa_col]), str(w[vsa_col])
             
             # Rule 1: No VSA Contradiction
-            if "SOW" in s_vsa or "Demand" in s_vsa: continue 
-            if "SOS" in w_vsa or "Supply" in w_vsa: continue 
+            if any(x in s_vsa for x in ["SOW", "Demand", "Breakdown", "❌"]): continue 
+            if any(x in w_vsa for x in ["SOS", "Supply", "Breakout", "✅"]): continue 
             
-            # Rule 2: VSA Confirmation Needed
+            # Rule 2: VSA Confirmation Needed (Including new setups)
             vsa_confirmed = False
-            if "SOS" in s_vsa or "Supply" in s_vsa: vsa_confirmed = True
-            if "SOW" in w_vsa or "Demand" in w_vsa: vsa_confirmed = True
+            if any(x in s_vsa for x in ["SOS", "Supply", "Breakout", "✅"]): vsa_confirmed = True
+            if any(x in w_vsa for x in ["SOW", "Demand", "Breakdown", "❌"]): vsa_confirmed = True
             
-            # Rule 3: COT Data Lock (The Ultimate Filter)
-            c1_cot_bias = get_cot_net_change(c1, cot_df) # Strong currency MUST have positive bias
-            c2_cot_bias = get_cot_net_change(c2, cot_df) # Weak currency MUST have negative bias
+            # Rule 3: COT Data Lock
+            c1_cot_bias = get_cot_net_change(c1, cot_df) 
+            c2_cot_bias = get_cot_net_change(c2, cot_df) 
             
-            # Strict COT Filter: If institutions are not aligned, reject the trade!
             if c1_cot_bias <= 0 or c2_cot_bias >= 0:
                 continue 
             
@@ -193,7 +198,7 @@ if not df_fx.empty:
                 except: pass
                 
     if not found: 
-        st.warning(f"Filhal {trading_mode} mode mein koi TRIPLE-LOCKED trade nahi. Technicals, Volume aur COT ka align hone ka wait karein.")
+        st.warning(f"Filhal {trading_mode} mode mein koi TRIPLE-LOCKED trade nahi. Breakouts ya Tests ka wait karein.")
 
 # --- 4. NEWS ---
 st.markdown("---")
