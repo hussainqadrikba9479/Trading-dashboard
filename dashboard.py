@@ -1,7 +1,6 @@
 import yfinance as yf
 import pandas as pd
 import streamlit as st
-import numpy as np
 import requests
 from datetime import datetime, timezone, timedelta
 
@@ -18,12 +17,16 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-st.title("🦅 Global Trading Terminal (VSA + COT Edition)")
+st.title("🦅 Global Trading Terminal (VSA Powered)")
+
+# --- Mode Selector (The Magic Toggle) ---
+st.markdown("### ⚙️ Select Trading Engine")
+trading_mode = st.radio("", ["Intraday (H1 + M30)", "Swing Trading (D1 + H4)"], horizontal=True)
 
 # --- Pakistan Time ---
 pkt_timezone = timezone(timedelta(hours=5))
 now_pkt = datetime.now(pkt_timezone)
-st.info(f"🕒 **Last Updated:** {now_pkt.strftime('%I:%M:%S %p')} (PKT)")
+st.info(f"🕒 **Last Updated:** {now_pkt.strftime('%I:%M:%S %p')} (PKT) | **Current Mode:** {trading_mode}")
 
 # --- 1. COT REPORT ---
 st.subheader("📊 Institutional Sentiment (COT Data)")
@@ -42,7 +45,7 @@ if isinstance(cot_df, pd.DataFrame):
 else:
     st.error(f"⚠️ COT File Load Error: {cot_df}")
 
-# --- 2. Market Analysis & VSA Engine ---
+# --- 2. MARKET ANALYSIS ENGINE ---
 futures_symbols = {'USD': 'DX-Y.NYB', 'EUR': '6E=F', 'GBP': '6B=F', 'JPY': '6J=F', 'AUD': '6A=F', 'CAD': '6C=F', 'CHF': '6S=F'}
 
 def calc_rsi(series, period=14):
@@ -53,60 +56,80 @@ def calc_rsi(series, period=14):
     return 100 - (100 / (1 + rs))
 
 @st.cache_data(ttl=300)
-def get_market_data(symbols_dict):
+def get_market_data(symbols_dict, mode):
     data_list = []
     for name, ticker in symbols_dict.items():
         try:
-            df_d = yf.download(ticker, period="2mo", interval="1d", progress=False)
-            df_h4 = yf.download(ticker, period="5d", interval="1h", progress=False) 
-            if df_d.empty or df_h4.empty: continue
-            if isinstance(df_d.columns, pd.MultiIndex): df_d.columns = df_d.columns.droplevel(1)
-            if isinstance(df_h4.columns, pd.MultiIndex): df_h4.columns = df_h4.columns.droplevel(1)
+            # Set timeframes based on selected mode
+            if mode == "Intraday (H1 + M30)":
+                df_htf = yf.download(ticker, period="1mo", interval="1h", progress=False)   # HTF = H1
+                df_ltf = yf.download(ticker, period="1mo", interval="30m", progress=False)  # LTF = M30
+                htf_label, ltf_label = "H1", "M30"
+            else:
+                df_htf = yf.download(ticker, period="2mo", interval="1d", progress=False)   # HTF = D1
+                df_ltf = yf.download(ticker, period="5d", interval="1h", progress=False)    # LTF = H4 (approx)
+                htf_label, ltf_label = "D1", "H4"
+                
+            if df_htf.empty or df_ltf.empty: continue
+            if isinstance(df_htf.columns, pd.MultiIndex): df_htf.columns = df_htf.columns.droplevel(1)
+            if isinstance(df_ltf.columns, pd.MultiIndex): df_ltf.columns = df_ltf.columns.droplevel(1)
 
-            close_d = df_d['Close'].iloc[-1]
-            prev_close_d = df_d['Close'].iloc[-2]
-            sma20_d = df_d['Close'].rolling(20).mean().iloc[-1]
-            rsi_d = calc_rsi(df_d['Close']).iloc[-1]
-            close_h4 = df_h4['Close'].iloc[-1]
-            sma20_h4 = df_h4['Close'].rolling(20).mean().iloc[-1]
+            # HTF Technicals (Trend Bias)
+            close_htf = df_htf['Close'].iloc[-1]
+            sma20_htf = df_htf['Close'].rolling(20).mean().iloc[-1]
+            rsi_htf = calc_rsi(df_htf['Close']).iloc[-1]
+            htf_trend = "UP" if close_htf > sma20_htf else "DOWN"
+
+            # LTF Technicals (Execution Setup)
+            close_ltf = df_ltf['Close'].iloc[-1]
+            prev_close_ltf = df_ltf['Close'].iloc[-2]
+            sma20_ltf = df_ltf['Close'].rolling(20).mean().iloc[-1]
+            ltf_trend = "UP" if close_ltf > sma20_ltf else "DOWN"
             
-            daily_trend = "UP" if close_d > sma20_d else "DOWN"
-            h4_trend = "UP" if close_h4 > sma20_h4 else "DOWN"
-            
+            # Master Score
             score = 5
-            if daily_trend == "UP" and h4_trend == "UP": score = 9
-            elif daily_trend == "DOWN" and h4_trend == "DOWN": score = 1
-            elif daily_trend == "UP" and h4_trend == "DOWN": score = 6
-            elif daily_trend == "DOWN" and h4_trend == "UP": score = 4
-            if rsi_d > 70: score -= 1 
-            if rsi_d < 30: score += 1 
+            if htf_trend == "UP" and ltf_trend == "UP": score = 9
+            elif htf_trend == "DOWN" and ltf_trend == "DOWN": score = 1
+            elif htf_trend == "UP" and ltf_trend == "DOWN": score = 6
+            elif htf_trend == "DOWN" and ltf_trend == "UP": score = 4
+            
+            if rsi_htf > 70: score -= 1 
+            if rsi_htf < 30: score += 1 
 
-            # --- VSA LOGIC ---
-            high, low, vol = df_d['High'].iloc[-1], df_d['Low'].iloc[-1], df_d['Volume'].iloc[-1]
-            prev_vol, prev_prev_vol = df_d['Volume'].iloc[-2], df_d['Volume'].iloc[-3]
-            avg_vol = df_d['Volume'].rolling(20).mean().iloc[-1]
+            # --- VSA LOGIC (Applied on LTF Timeframe) ---
+            high, low, vol = df_ltf['High'].iloc[-1], df_ltf['Low'].iloc[-1], df_ltf['Volume'].iloc[-1]
+            prev_vol, prev_prev_vol = df_ltf['Volume'].iloc[-2], df_ltf['Volume'].iloc[-3]
+            
+            avg_vol = df_ltf['Volume'].rolling(20).mean().iloc[-1]
             spread = high - low
-            avg_spread = (df_d['High'] - df_d['Low']).rolling(20).mean().iloc[-1]
-            close_pos = (close_d - low) / spread if spread > 0 else 0.5
+            avg_spread = (df_ltf['High'] - df_ltf['Low']).rolling(20).mean().iloc[-1]
+            close_pos = (close_ltf - low) / spread if spread > 0 else 0.5
             
             vsa_signal = "Neutral"
-            if (close_d > prev_close_d) and (spread > avg_spread) and (close_pos < 0.3) and (vol > avg_vol * 1.2):
+            if (close_ltf > prev_close_ltf) and (spread > avg_spread) and (close_pos < 0.3) and (vol > avg_vol * 1.2):
                 vsa_signal = "🚨 Upthrust (SOW)"
-            elif (close_d < prev_close_d) and (spread > avg_spread) and (close_pos > 0.7) and (vol > avg_vol * 1.2):
+            elif (close_ltf < prev_close_ltf) and (spread > avg_spread) and (close_pos > 0.7) and (vol > avg_vol * 1.2):
                 vsa_signal = "🟢 Shakeout (SOS)"
-            elif (close_d > prev_close_d) and (spread < avg_spread) and (vol < prev_vol) and (vol < prev_prev_vol):
+            elif (close_ltf > prev_close_ltf) and (spread < avg_spread) and (vol < prev_vol) and (vol < prev_prev_vol):
                 vsa_signal = "📉 No Demand"
-            elif (close_d < prev_close_d) and (spread < avg_spread) and (vol < prev_vol) and (vol < prev_prev_vol):
+            elif (close_ltf < prev_close_ltf) and (spread < avg_spread) and (vol < prev_vol) and (vol < prev_prev_vol):
                 vsa_signal = "📈 No Supply"
 
-            data_list.append({'Instrument': name, 'D1': daily_trend, 'H4': h4_trend, 'RSI': round(rsi_d, 2), 'VSA': vsa_signal, 'Score': score})
+            data_list.append({
+                'Instrument': name, 
+                f'{htf_label} Trend': htf_trend, 
+                f'{ltf_label} Trend': ltf_trend, 
+                f'RSI ({htf_label})': round(rsi_htf, 2), 
+                f'{ltf_label} VSA': vsa_signal, 
+                'Score': score
+            })
         except: pass
     return pd.DataFrame(data_list)
 
 # Tables UI
 st.markdown("---")
-st.subheader("🔍 Market Analysis Phase")
-df_fx = get_market_data(futures_symbols)
+st.subheader(f"🔍 Analysis Phase ({trading_mode})")
+df_fx = get_market_data(futures_symbols, trading_mode)
 
 def style_score(val):
     if val >= 8: return 'background-color: #2ecc71; color: black; font-weight: bold'
@@ -115,24 +138,25 @@ def style_score(val):
 
 st.dataframe(df_fx.style.map(style_score, subset=['Score']), use_container_width=True, hide_index=True)
 
-# --- 3. STRICT RECOMMENDATIONS SECTION (Technical + VSA Locked) ---
+# --- 3. STRICT RECOMMENDATIONS SECTION ---
 st.markdown("---")
-st.subheader("🎯 Refined Trade Recommendations (Technicals + VSA)")
+st.subheader("🎯 Refined Trade Setups (Score + Volume Locked)")
 if not df_fx.empty:
     strong = df_fx[df_fx['Score'] >= 8]
     weak = df_fx[df_fx['Score'] <= 3]
     found = False
     
+    # Get the correct VSA column name dynamically based on mode
+    vsa_col = 'M30 VSA' if trading_mode == "Intraday (H1 + M30)" else 'H4 VSA'
+    
     for _, s in strong.iterrows():
         for _, w in weak.iterrows():
             c1, c2 = s['Instrument'], w['Instrument']
-            s_vsa, w_vsa = str(s['VSA']), str(w['VSA'])
+            s_vsa, w_vsa = str(s[vsa_col]), str(w[vsa_col])
             
-            # Rule 1: No Contradiction (Filter out opposing volume signals)
-            if "SOW" in s_vsa or "Demand" in s_vsa: continue # Strong pair rejecting higher prices
-            if "SOS" in w_vsa or "Supply" in w_vsa: continue # Weak pair rejecting lower prices
+            if "SOW" in s_vsa or "Demand" in s_vsa: continue 
+            if "SOS" in w_vsa or "Supply" in w_vsa: continue 
             
-            # Rule 2: VSA Confirmation (At least one must have active Smart Money footprint)
             vsa_confirmed = False
             if "SOS" in s_vsa or "Supply" in s_vsa: vsa_confirmed = True
             if "SOW" in w_vsa or "Demand" in w_vsa: vsa_confirmed = True
@@ -143,12 +167,12 @@ if not df_fx.empty:
                     if order.index(c1) < order.index(c2): pair, action = f"{c1}{c2}", "BUY"
                     else: pair, action = f"{c2}{c1}", "SELL"
                     
-                    st.success(f"✅ **{action} {pair}** | Double Confluence 🚀")
+                    st.success(f"⚡ **{action} {pair}** | Double Confluence 🚀")
                     st.write(f"**Smart Money Footprint:** {c1} ({s_vsa}) vs {c2} ({w_vsa})")
                     found = True
                 except: pass
                 
-    if not found: st.warning("Filhal strict criteria (Technicals + VSA) par koi trade setup nahi mila. Market ka wait karein.")
+    if not found: st.warning(f"Filhal {trading_mode} criteria par koi trade setup nahi mila.")
 
 # --- 4. NEWS ---
 st.markdown("---")
