@@ -4,32 +4,34 @@ import streamlit as st
 import numpy as np
 from datetime import datetime
 
-# --- Dashboard Configuration ---
-st.set_page_config(page_title="Futures Strength Dashboard", layout="wide")
+# --- 14. Classic Design & UI Tweaks ---
+st.set_page_config(page_title="Trading Dashboard", layout="wide")
+st.markdown("""
+    <style>
+    .main {background-color: #f4f6f9;}
+    h1 {color: #1e3d59; font-family: 'Segoe UI', sans-serif; font-weight: bold;}
+    h2, h3 {color: #ff6e40;}
+    .stDataFrame {width: 100%;}
+    .caution-box {background-color: #ff9a3c; padding: 12px; border-radius: 8px; color: black; font-weight: bold; border-left: 6px solid #d35400; margin-bottom: 10px;}
+    .news-box {background-color: #ffffff; padding: 15px; border-radius: 8px; box-shadow: 0px 4px 6px rgba(0,0,0,0.1); border-left: 6px solid #1e3d59;}
+    </style>
+""", unsafe_allow_html=True)
 
-# --- Header & Refresh Button ---
+# --- 1 & 2. Title Update ---
+st.title("📊 Trading Dashboard")
+
+# --- 3. Refresh Button Fix ---
 col1, col2 = st.columns([4, 1])
-with col1:
-    st.title("🦅 Pro Futures to Forex Dashboard")
-    st.write("Yeh system individual Currency Futures ko analyze kar ke highest probability Forex Pair nikalta hai.")
 with col2:
-    st.write("") # Thori space ke liye
-    if st.button("🔄 Refresh Data Now"):
-        st.cache_data.clear() # Purana cache delete karega
-        st.rerun() # Page ko fresh data ke sath reload karega
+    st.write("") 
+    if st.button("🔄 Refresh Data Now", use_container_width=True):
+        st.cache_data.clear()
+        st.rerun()
+st.info(f"🕒 **Last Updated:** {datetime.now().strftime('%I:%M:%S %p')}")
 
-# Updated Time Show Karne Ke Liye
-st.info(f"🕒 **Last Market Data Updated:** {datetime.now().strftime('%I:%M:%S %p')}")
-
-# --- Currency Futures Symbols ---
 futures_symbols = {
-    'USD': 'DX-Y.NYB', 
-    'EUR': '6E=F',     
-    'GBP': '6B=F',     
-    'JPY': '6J=F',     
-    'AUD': '6A=F',     
-    'CAD': '6C=F',     
-    'CHF': '6S=F'      
+    'USD': 'DX-Y.NYB', 'EUR': '6E=F', 'GBP': '6B=F', 
+    'JPY': '6J=F', 'AUD': '6A=F', 'CAD': '6C=F', 'CHF': '6S=F'
 }
 
 def calc_rsi(series, period=14):
@@ -42,78 +44,126 @@ def calc_rsi(series, period=14):
 @st.cache_data(ttl=300) 
 def get_futures_data():
     data_list = []
-    
     for currency, ticker in futures_symbols.items():
         try:
             df = yf.download(ticker, period="1mo", interval="1d", progress=False)
             if df.empty: continue
-            
             if isinstance(df.columns, pd.MultiIndex):
                 df.columns = df.columns.droplevel(1)
                 
             close_price = df['Close'].iloc[-1]
             prev_close = df['Close'].iloc[-2]
             
-            daily_change = ((close_price - prev_close) / prev_close) * 100
+            # --- 6. Only Net Change ---
+            net_change = ((close_price - prev_close) / prev_close) * 100
+            
             df['RSI'] = calc_rsi(df['Close'])
             current_rsi = df['RSI'].iloc[-1]
             
+            # --- 7. Basic Structure (Will upgrade to HH/HL later) ---
             sma_20 = df['Close'].rolling(20).mean().iloc[-1]
-            structure = "⬆️ Bullish" if close_price > sma_20 else "⬇️ Bearish"
+            structure = "Trending" if close_price > sma_20 else "Volatile" 
             
             score = 5
-            if current_rsi > 55: score += 2 
-            elif current_rsi < 45: score -= 2 
-            
+            if current_rsi >= 75: score += 2 
+            elif current_rsi <= 25: score -= 2 
             if close_price > sma_20: score += 3 
             else: score -= 3 
             
-            final_score = round(score + daily_change, 3)
+            final_score = round(score + net_change, 3)
             
+            # --- 10. Remarks based on RSI and Score ---
+            remarks = "Normal"
+            if final_score >= 8 and current_rsi >= 75:
+                remarks = "⚠️ Extreme Overbought"
+            elif final_score <= 4 and current_rsi <= 25:
+                remarks = "⚠️ Extreme Oversold"
+            elif current_rsi >= 75:
+                remarks = "RSI High (Watch)"
+            elif current_rsi <= 25:
+                remarks = "RSI Low (Watch)"
+
             data_list.append({
                 'Currency': currency,
-                'Close Price': round(close_price, 4),
-                'Change (%)': round(daily_change, 2),
+                'Net Change (%)': round(net_change, 2),
                 'Structure': structure,
                 'RSI (14)': round(current_rsi, 2),
-                'Strength Score': final_score
+                'Strength Score': final_score,
+                'Remarks': remarks
             })
-        except:
-            pass 
+        except: pass 
             
-    return pd.DataFrame(data_list)
+    df_res = pd.DataFrame(data_list)
+    # --- 5. Index Starts at 1 ---
+    df_res.index = np.arange(1, len(df_res) + 1)
+    return df_res
 
 df = get_futures_data()
 
-# --- UI Highlighting ---
-def highlight_strength(val):
-    if val >= 7: return 'background-color: #00FF00; color: black; font-weight: bold'
-    elif val <= 3: return 'background-color: #FF4136; color: white; font-weight: bold'
+# --- 9. Green >= 8, Red <= 4 ---
+def highlight_cells(val):
+    if isinstance(val, (int, float)):
+        if val >= 8: return 'background-color: #2ecc71; color: black; font-weight: bold'
+        elif val <= 4: return 'background-color: #e74c3c; color: white; font-weight: bold'
     return ''
 
-st.subheader("1️⃣ Currency Futures Strength Meter")
-st.dataframe(df.style.map(highlight_strength, subset=['Strength Score']), use_container_width=True)
+def highlight_remarks(val):
+    if "⚠️" in str(val): return 'color: #c0392b; font-weight: bold'
+    return ''
 
-# --- Pair Derivation Engine ---
+# --- 4. Analysis Phase & Fit Window ---
 st.markdown("---")
-st.subheader("2️⃣ Derived Highest Probability Trade")
+st.subheader("🔍 Analysis Phase")
+st.dataframe(
+    df.style.map(highlight_cells, subset=['Strength Score']).map(highlight_remarks, subset=['Remarks']), 
+    use_container_width=True # Ensure columns don't exceed window
+)
+
+# --- 11. Recommendation Section ---
+st.markdown("---")
+st.subheader("🎯 Recommendation")
 
 if not df.empty:
-    strongest = df.loc[df['Strength Score'].idxmax()]
-    weakest = df.loc[df['Strength Score'].idxmin()]
+    # --- 8. Filter Logic: Buy <= 25 or Normal, Sell >= 75 or Normal ---
+    # Sirf unhi ko valid setup manein jinka RSI extreme ke against na ho
+    strong_candidates = df[(df['Strength Score'] >= 8) & (df['RSI (14)'] < 75)]
+    weak_candidates = df[(df['Strength Score'] <= 4) & (df['RSI (14)'] > 25)]
+    
+    # --- 12. Caution Section for Extremes ---
+    extreme_strong = df[(df['Strength Score'] >= 8) & (df['RSI (14)'] >= 75)]
+    extreme_weak = df[(df['Strength Score'] <= 4) & (df['RSI (14)'] <= 25)]
     
     currency_order = ['EUR', 'GBP', 'AUD', 'USD', 'CAD', 'CHF', 'JPY']
-    c1 = strongest['Currency']
-    c2 = weakest['Currency']
     
-    if currency_order.index(c1) < currency_order.index(c2):
-        pair = f"{c1}{c2}"
-        action = "BUY 🟢"
-        reason = f"{c1} strong hai aur {c2} weak hai."
+    st.write("#### 🟢 Valid Trade Setups")
+    if not strong_candidates.empty and not weak_candidates.empty:
+        for _, s_row in strong_candidates.iterrows():
+            for _, w_row in weak_candidates.iterrows():
+                c1, c2 = s_row['Currency'], w_row['Currency']
+                if currency_order.index(c1) < currency_order.index(c2):
+                    pair = f"{c1}{c2}"
+                    st.success(f"**BUY {pair}** -> ({c1} is Strong, {c2} is Weak)")
+                else:
+                    pair = f"{c2}{c1}"
+                    st.success(f"**SELL {pair}** -> ({c1} is Strong, {c2} is Weak)")
     else:
-        pair = f"{c2}{c1}"
-        action = "SELL 🔴"
-        reason = f"{c1} strong hai is liye hum {c2} ko sell kar rahay hain."
-        
-    st.success(f"### 🎯 Recommended Trade Setup: **{action} {pair}**")
-    st.info(f"**Reason:** {reason}")
+        st.info("Filhal koi clear high-probability setup nahi hai. Market conditions ranging hain.")
+
+    st.write("#### ⚠️ Extreme Conditions (Caution)")
+    if not extreme_strong.empty:
+        for _, row in extreme_strong.iterrows():
+            st.markdown(f"<div class='caution-box'>🚫 <b>Avoid Buying {row['Currency']} Pairs:</b> Score is High ({row['Strength Score']}) but RSI is Overbought ({row['RSI (14)']}). Wait for Pullback.</div>", unsafe_allow_html=True)
+            
+    if not extreme_weak.empty:
+        for _, row in extreme_weak.iterrows():
+            st.markdown(f"<div class='caution-box'>🚫 <b>Avoid Selling {row['Currency']} Pairs:</b> Score is Low ({row['Strength Score']}) but RSI is Oversold ({row['RSI (14)']}). Wait for Bounce.</div>", unsafe_allow_html=True)
+
+# --- 13. News Section (Placeholder for upcoming API connection) ---
+st.markdown("---")
+st.subheader("📰 Market News & Events")
+st.markdown("""
+<div class='news-box'>
+    <b>Live Forex Factory News Feed</b><br>
+    <i>Yeh section aglay phase mein live news API ke zariye connect hoga taake aap ko time aur impact pata chal sakay.</i>
+</div>
+""", unsafe_allow_html=True)
