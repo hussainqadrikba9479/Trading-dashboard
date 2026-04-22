@@ -17,7 +17,7 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-st.title("🦅 Global Trading Terminal (VSA + Gold Edition)")
+st.title("🦅 Global Trading Terminal (Triple Lock Edition)")
 
 # --- Mode Selector ---
 st.markdown("### ⚙️ Select Trading Engine")
@@ -45,12 +45,24 @@ if isinstance(cot_df, pd.DataFrame):
 else:
     st.error(f"⚠️ COT File Load Error: {cot_df}")
 
+# --- Helper: Get COT Net Change ---
+def get_cot_net_change(inst, df):
+    if not isinstance(df, pd.DataFrame) or df.empty: return 0
+    search_term = inst
+    if inst == 'USD': search_term = 'USD'
+    elif inst == 'GOLD': search_term = 'Gold'
+    
+    try:
+        match = df[df['Instrument'].astype(str).str.contains(search_term, case=False, na=False)]
+        if not match.empty:
+            return float(match['Net Change'].iloc[0])
+    except: pass
+    return 0
+
 # --- 2. MARKET ANALYSIS ENGINE ---
-# Gold (GC=F) added to the symbols list
 futures_symbols = {
-    'USD': 'DX-Y.NYB', 'EUR': '6E=F', 'GBP': '6B=F', 
-    'JPY': '6J=F', 'AUD': '6A=F', 'CAD': '6C=F', 
-    'CHF': '6S=F', 'GOLD': 'GC=F'
+    'USD': 'DX-Y.NYB', 'GOLD': 'GC=F', 'EUR': '6E=F', 'GBP': '6B=F', 
+    'JPY': '6J=F', 'AUD': '6A=F', 'CAD': '6C=F', 'CHF': '6S=F'
 }
 
 def calc_rsi(series, period=14):
@@ -137,14 +149,13 @@ def style_score(val):
 
 st.dataframe(df_fx.style.map(style_score, subset=['Score']), use_container_width=True, hide_index=True)
 
-# --- 3. RECOMMENDATIONS SECTION ---
+# --- 3. TRIPLE-LOCKED RECOMMENDATIONS SECTION ---
 st.markdown("---")
-st.subheader("🎯 Refined Trade Setups (Score + Volume Locked)")
+st.subheader("🎯 Triple-Locked Setups (Score + VSA + COT)")
 if not df_fx.empty:
     strong = df_fx[df_fx['Score'] >= 8]
     weak = df_fx[df_fx['Score'] <= 3]
     found = False
-    
     vsa_col = 'M30 VSA' if trading_mode == "Intraday (H1 + M30)" else 'H4 VSA'
     
     for _, s in strong.iterrows():
@@ -152,30 +163,37 @@ if not df_fx.empty:
             c1, c2 = s['Instrument'], w['Instrument']
             s_vsa, w_vsa = str(s[vsa_col]), str(w[vsa_col])
             
+            # Rule 1: No VSA Contradiction
             if "SOW" in s_vsa or "Demand" in s_vsa: continue 
             if "SOS" in w_vsa or "Supply" in w_vsa: continue 
             
+            # Rule 2: VSA Confirmation Needed
             vsa_confirmed = False
             if "SOS" in s_vsa or "Supply" in s_vsa: vsa_confirmed = True
             if "SOW" in w_vsa or "Demand" in w_vsa: vsa_confirmed = True
             
+            # Rule 3: COT Data Lock (The Ultimate Filter)
+            c1_cot_bias = get_cot_net_change(c1, cot_df) # Strong currency MUST have positive bias
+            c2_cot_bias = get_cot_net_change(c2, cot_df) # Weak currency MUST have negative bias
+            
+            # Strict COT Filter: If institutions are not aligned, reject the trade!
+            if c1_cot_bias <= 0 or c2_cot_bias >= 0:
+                continue 
+            
             if vsa_confirmed:
-                # Pair logic with Gold
-                if c1 == 'GOLD' or c2 == 'GOLD':
-                    pair = "GOLD/USD" if (c1 == 'GOLD' or c2 == 'USD') else f"{c1}/{c2}"
-                    action = "BUY" if c1 == 'GOLD' else "SELL"
-                else:
-                    order = ['EUR', 'GBP', 'AUD', 'NZD', 'USD', 'CAD', 'CHF', 'JPY']
-                    try:
-                        if order.index(c1) < order.index(c2): pair, action = f"{c1}{c2}", "BUY"
-                        else: pair, action = f"{c2}{c1}", "SELL"
-                    except: pair, action = f"{c1}{c2}", "TRADE"
-
-                st.success(f"⚡ **{action} {pair}** | High Probability Setup")
-                st.write(f"**Footprint:** {c1} ({s_vsa}) vs {c2} ({w_vsa})")
-                found = True
+                order = ['GOLD', 'EUR', 'GBP', 'AUD', 'NZD', 'USD', 'CAD', 'CHF', 'JPY']
+                try:
+                    if order.index(c1) < order.index(c2): pair, action = f"{c1}{c2}", "BUY"
+                    else: pair, action = f"{c2}{c1}", "SELL"
+                    
+                    st.success(f"⚡ **{action} {pair}** | Triple Confluence 🚀🚀🚀")
+                    st.write(f"**VSA Match:** {c1} ({s_vsa}) vs {c2} ({w_vsa})")
+                    st.write(f"**COT Bias (Net Change):** 📈 {c1} (+{c1_cot_bias}) | 📉 {c2} ({c2_cot_bias})")
+                    found = True
+                except: pass
                 
-    if not found: st.warning(f"Filhal koi trade setup nahi mila. Market observe karein.")
+    if not found: 
+        st.warning(f"Filhal {trading_mode} mode mein koi TRIPLE-LOCKED trade nahi. Technicals, Volume aur COT ka align hone ka wait karein.")
 
 # --- 4. NEWS ---
 st.markdown("---")
