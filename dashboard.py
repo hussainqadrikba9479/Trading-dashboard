@@ -28,23 +28,34 @@ st.info(f"🕒 **Last Updated:** {now_pkt.strftime('%I:%M:%S %p')} (PKT)")
 # --- 1. COT REPORT (GitHub Excel Integration) ---
 st.subheader("📊 Institutional Sentiment (COT Data)")
 
-# Cache hata diya hai taake foran fresh error dikhaye
+@st.cache_data(ttl=3600)
 def load_cot_data():
     try:
-        # File read karne ki koshish
-        df_cot = pd.read_excel("COT.xlsm", sheet_name="Main", engine='openpyxl')
-        return df_cot[['Instruments', 'Net Change', 'Direction', 'COT Index', 'OI Change']]
+        # Excel se specific columns A, B, G, K, P uthana aur pehli 2 header rows skip karna
+        df_cot = pd.read_excel(
+            "COT.xlsm", 
+            sheet_name="Main", 
+            engine='openpyxl',
+            usecols="A,B,G,K,P", 
+            skiprows=2, 
+            header=None
+        )
+        # Apne clean column names assign karna
+        df_cot.columns = ['Instrument', 'Net Change', 'Direction', 'COT Index', 'OI Change']
+        
+        # Khali rows ko hatana (agar excel mein koi empty row aa jaye)
+        df_cot = df_cot.dropna(subset=['Instrument'])
+        
+        return df_cot
     except Exception as e:
-        return str(e) # Ab yeh exact error wapis bhejayga!
+        return str(e)
 
 cot_data = load_cot_data()
 
-# Check agar data table ban gaya hai ya error text aaya hai
 if isinstance(cot_data, pd.DataFrame):
-    st.dataframe(cot_data.head(15), use_container_width=True)
+    st.dataframe(cot_data.head(15), use_container_width=True, hide_index=True)
     st.caption("💡 Tip: Net Change (+) aur OI Change (+) ka matlab hai New Positions add ho rahi hain.")
 else:
-    # Error message ko screen par lal rang mein dikhayega
     st.error(f"⚠️ File load nahi hui. Server ka Error yeh hai: {cot_data}")
 
 # --- 2. Market Analysis (Technicals) ---
@@ -105,7 +116,7 @@ def style_score(val):
     if val <= 3: return 'background-color: #e74c3c; color: white; font-weight: bold'
     return ''
 
-st.dataframe(df_fx.style.map(style_score, subset=['Master Score']), use_container_width=True)
+st.dataframe(df_fx.style.map(style_score, subset=['Master Score']), use_container_width=True, hide_index=True)
 
 # --- News Section ---
 st.markdown("---")
