@@ -23,7 +23,8 @@ st.title("📊 Master Trading Dashboard")
 
 # --- Pakistan Time ---
 pkt_timezone = timezone(timedelta(hours=5))
-pkt_time = datetime.now(pkt_timezone).strftime('%I:%M:%S %p')
+now_pkt = datetime.now(pkt_timezone)
+pkt_time = now_pkt.strftime('%I:%M:%S %p')
 st.info(f"🕒 **Last Updated:** {pkt_time} (PKT)")
 
 # --- Central Bank Bias (Fundamental View) ---
@@ -144,47 +145,47 @@ if not df.empty:
     else:
         st.warning("Market is currently mixed. No High Probability Confluence found.")
 
-# --- 4. Live News API (High Impact Only) ---
+# --- 4. Live News API (Fixed Timezone & Range) ---
 st.markdown("---")
-st.subheader("🚨 Today's High Impact News")
+st.subheader("🚨 Upcoming High Impact News (This Week)")
 
-@st.cache_data(ttl=600) # Cache news for 10 minutes
+@st.cache_data(ttl=600) 
 def get_forex_news():
     try:
-        # Official JSON API
         url = "https://nfs.faireconomy.media/ff_calendar_thisweek.json"
         response = requests.get(url, timeout=10)
         data = response.json()
         
-        # Aaj ki date nikalna PKT mein
-        today_date = datetime.now(pkt_timezone).strftime("%Y-%m-%d")
         news_found = False
         
         for event in data:
-            event_date_str = event.get('date', '')[:10]
             impact = event.get('impact', '')
             
-            # Agar news High impact hai aur aaj ki date ki hai
-            if impact == 'High' and event_date_str == today_date:
+            # Sirf High Impact (Red) News
+            if impact == 'High':
                 try:
-                    # Time ko PKT mein convert karna
+                    # US Time ko PKT mein convert karna
                     dt_obj = datetime.fromisoformat(event['date'])
                     pkt_dt = dt_obj.astimezone(pkt_timezone)
-                    display_time = pkt_dt.strftime("%I:%M %p")
+                    
+                    # Agar news aaj ki hai ya aane wale dino ki hai (guzar nahi chuki)
+                    if pkt_dt.date() >= now_pkt.date():
+                        display_date = pkt_dt.strftime("%d %b") # e.g., 22 Apr
+                        display_time = pkt_dt.strftime("%I:%M %p") # e.g., 06:30 PM
+                        
+                        st.markdown(f"""
+                            <div class='news-card'>
+                                <b>🔴 {event['country']} - {event['title']}</b><br>
+                                <small>Date: {display_date} | Time: {display_time} (PKT) | Forecast: {event.get('forecast', '-')} | Previous: {event.get('previous', '-')}</small>
+                            </div>
+                        """, unsafe_allow_html=True)
+                        news_found = True
                 except:
-                    display_time = "Check Calendar"
-
-                st.markdown(f"""
-                    <div class='news-card'>
-                        <b>🔴 {event['country']} - {event['title']}</b><br>
-                        <small>Time: {display_time} (PKT) | Forecast: {event.get('forecast', '-')} | Previous: {event.get('previous', '-')}</small>
-                    </div>
-                """, unsafe_allow_html=True)
-                news_found = True
+                    pass
                 
         if not news_found:
-            st.info("Aaj koi High Impact (Red Folder) news nahi hai. Market technicals ke hisab se chalegi.")
+            st.info("Is hafte mazeed koi High Impact (Red Folder) news nahi hai.")
     except Exception as e:
-        st.error(f"Live news load hone mein masla aa raha hai. ({e})")
+        st.error(f"Live news load hone mein masla aa raha hai. API temporary block ho sakti hai. ({e})")
 
 get_forex_news()
