@@ -339,7 +339,7 @@ with st.sidebar:
 if api_key:
     genai.configure(api_key=api_key)
     # Gemini Flash ya Pro model select karein
-    model = genai.GenerativeModel('gemini-1.5-flash') 
+    model = genai.GenerativeModel('gemini-pro') 
 
     if st.button("🚀 Generate AI Market Analysis & Risk Report"):
         with st.spinner("Gemini is analyzing Structure, Volume, and News... Please wait."):
