@@ -331,51 +331,55 @@ else:
 st.markdown("---")
 st.subheader("🧠 Gemini AI Co-Pilot (Live Market Analysis)")
 
-# Sidebar mein API key input box banayen taake screen clear rahay
 with st.sidebar:
     st.markdown("### 🔑 AI Co-Pilot Settings")
-    api_key = st.text_input("Enter Gemini API Key:", type="password", help="Get a free key from Google AI Studio (aistudio.google.com)")
+    api_key = st.text_input("Enter Gemini API Key:", type="password", help="Get a free key from Google AI Studio")
 
 if api_key:
     genai.configure(api_key=api_key)
-    # Gemini Flash ya Pro model select karein
-    model = genai.GenerativeModel('gemini-pro') 
 
     if st.button("🚀 Generate AI Market Analysis & Risk Report"):
         with st.spinner("Gemini is analyzing Structure, Volume, and News... Please wait."):
             try:
-                # Dashboard ka data text mein convert kar ke AI ko bhejne ki tayari
-                market_summary = df_fx.to_string() if not df_fx.empty else "No PA setups currently."
-                
-                # News ko text mein badalna (agar available ho)
-                try:
-                    news_summary = "\n".join([n['title'] for n in live_news]) if live_news else "No major squawk news."
-                except:
-                    news_summary = "News feed data not available."
+                # 1. AUTO-DETECT MODEL (Error Fix)
+                available_models = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
+                if not available_models:
+                    st.error("⚠️ Aap ki API key par koi text model available nahi hai. Nayi key banayen.")
+                else:
+                    # Sab se pehla available model khud utha le ga
+                    target_model = available_models[0] 
+                    model = genai.GenerativeModel(target_model)
 
-                # AI ko instructions (Prompt) dena
-                prompt = f"""
-                Aap ek expert quantitative forex trader aur risk manager hain. Niche diye gaye live market data (VSA/Price Action) aur taaza khabron ka jaiza lein:
-                
-                MARKET DATA (Pairs, Structure, PA Signal, Volume):
-                {market_summary}
-                
-                LATEST BREAKING NEWS:
-                {news_summary}
-                
-                Bataiye:
-                1. Market ka overall mood kya hai?
-                2. Kin pairs par sab se behtareen setup ban raha hai aur kyun?
-                3. RISKS & WARNINGS: Kya kisi setup mein ghalti ki gunjaish hai? (maslan weak angle, trap volume, ya kisi news ki wajah se market opposite ja sakti hai?). 
-                
-                Jawab point-to-point aur asaan Roman Urdu / English mix mein dein.
-                """
+                    # 2. DATA PREPARATION
+                    market_summary = df_fx.to_string() if not df_fx.empty else "No PA setups currently."
+                    try:
+                        news_summary = "\n".join([n['title'] for n in live_news]) if live_news else "No major squawk news."
+                    except:
+                        news_summary = "News feed data not available."
 
-                response = model.generate_content(prompt)
-                
-                st.success("✅ Analysis Complete!")
-                # AI ka jawab screen par dikhana
-                st.markdown(f"<div style='background-color: #e8f4f8; padding: 20px; border-radius: 10px; border-left: 5px solid #3498db;'>{response.text}</div>", unsafe_allow_html=True)
+                    # 3. PROMPT
+                    prompt = f"""
+                    Aap ek expert quantitative forex trader aur risk manager hain. Niche diye gaye live market data (VSA/Price Action) aur taaza khabron ka jaiza lein:
+                    
+                    MARKET DATA (Pairs, Structure, PA Signal, Volume):
+                    {market_summary}
+                    
+                    LATEST BREAKING NEWS:
+                    {news_summary}
+                    
+                    Bataiye:
+                    1. Market ka overall mood kya hai?
+                    2. Kin pairs par sab se behtareen setup ban raha hai aur kyun?
+                    3. RISKS & WARNINGS: Kya kisi setup mein ghalti ki gunjaish hai? (maslan weak angle, trap volume, ya kisi news ki wajah se market opposite ja sakti hai?). 
+                    
+                    Jawab point-to-point aur asaan Roman Urdu / English mix mein dein.
+                    """
+
+                    # 4. GET RESPONSE
+                    response = model.generate_content(prompt)
+                    
+                    st.success(f"✅ Analysis Complete! (Powered by {target_model})")
+                    st.markdown(f"<div style='background-color: #e8f4f8; padding: 20px; border-radius: 10px; border-left: 5px solid #3498db;'>{response.text}</div>", unsafe_allow_html=True)
                 
             except Exception as e:
                 st.error(f"⚠️ AI Analysis Error: Please check your API Key or connection. Detail: {e}")
