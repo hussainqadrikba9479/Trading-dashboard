@@ -280,3 +280,47 @@ def get_news():
                 except: pass
     except: pass
 get_news()
+# --- 5. LIVE BREAKING NEWS (SQUAWK FEED) ---
+st.markdown("---")
+st.subheader("📰 Live Breaking News (Forex Squawk)")
+
+@st.cache_data(ttl=120)  # Har 2 minute baad naya data fetch karega (120 seconds)
+def get_live_squawk_news():
+    try:
+        # ForexLive ya kisi reliable news source ka RSS feed URL
+        url = "https://www.forexlive.com/feed"
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+        }
+        response = requests.get(url, headers=headers, timeout=10)
+        
+        # XML Data ko parse karna
+        import xml.etree.ElementTree as ET
+        root = ET.fromstring(response.content)
+        
+        news_items = []
+        # Sab se taaza 7 khabrein nikalna
+        for item in root.findall('.//item')[:7]:
+            title = item.find('title').text
+            # Time formatting
+            pub_date = item.find('pubDate').text
+            link = item.find('link').text
+            news_items.append({'title': title, 'time': pub_date, 'link': link})
+            
+        return news_items
+    except Exception as e:
+        return []
+
+live_news = get_live_squawk_news()
+
+if live_news:
+    for news in live_news:
+        # Breaking news ke liye blue border wala card
+        st.markdown(f"""
+        <div class='news-card' style='border-left-color: #3498db; background-color: #f0f8ff;'>
+            <b>⚡ {news['title']}</b><br>
+            <small style='color: #555;'>{news['time']} | <a href='{news['link']}' target='_blank' style='text-decoration: none; color: #3498db; font-weight: bold;'>Read Full Update</a></small>
+        </div>
+        """, unsafe_allow_html=True)
+else:
+    st.info("Live squawk feed is currently fetching or temporarily unavailable.")
