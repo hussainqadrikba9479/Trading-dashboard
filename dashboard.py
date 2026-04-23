@@ -12,7 +12,8 @@ st.markdown("""
     .main {background-color: #f4f6f9;}
     .sentiment-card {padding: 10px; border-radius: 8px; margin-bottom: 5px; color: white; font-weight: bold; text-align: center; font-size: 0.8rem;}
     .news-card {border-left: 6px solid #e74c3c; background-color: #ffffff; padding: 12px; border-radius: 8px; box-shadow: 0px 4px 6px rgba(0,0,0,0.1); margin-bottom: 10px;}
-    .session-box {padding: 10px; border-radius: 8px; text-align: center; font-weight: bold; margin-bottom: 15px; transition: 0.3s;}
+    .session-box {padding: 12px; border-radius: 8px; text-align: center; margin-bottom: 15px; transition: 0.3s;}
+    .time-badge {background: rgba(0,0,0,0.15); padding: 4px 8px; border-radius: 4px; display: inline-block; font-size: 0.8em; margin-top: 5px;}
     </style>
 """, unsafe_allow_html=True)
 
@@ -33,29 +34,62 @@ if trading_mode == "Backtest Mode (Historical)":
 # --- Pakistan Time & Live Sessions ---
 pkt_timezone = timezone(timedelta(hours=5))
 now_pkt = datetime.now(pkt_timezone)
-st.info(f"🕒 **Last Updated:** {now_pkt.strftime('%I:%M:%S %p')} (PKT) | **Current Mode:** {trading_mode}")
+st.info(f"🕒 **Live Clock:** {now_pkt.strftime('%I:%M:%S %p')} (PKT) | **Current Mode:** {trading_mode}")
 
-# Session Logic (PKT Timings)
-current_hour = now_pkt.hour
-sydney_active = 3 <= current_hour < 12
-tokyo_active = 5 <= current_hour < 14
-london_active = 12 <= current_hour < 21
-ny_active = current_hour >= 17 or current_hour < 2
+# Advanced Session Logic with Countdown
+def get_session_status(now, open_h, close_h):
+    open_time = now.replace(hour=open_h, minute=0, second=0, microsecond=0)
+    close_time = now.replace(hour=close_h, minute=0, second=0, microsecond=0)
+    
+    if open_h > close_h: # Overnight Session (e.g., NY 17 to 02)
+        if now.hour >= open_h or now.hour < close_h:
+            is_active = True
+            if now.hour >= open_h:
+                close_time += timedelta(days=1)
+        else:
+            is_active = False
+    else: # Normal Day Session
+        is_active = open_h <= now.hour < close_h
+        if not is_active and now.hour >= close_h:
+            open_time += timedelta(days=1)
+            
+    if is_active:
+        diff = close_time - now
+        rem = f"⏳ Closes in {diff.seconds // 3600}h {(diff.seconds // 60) % 60}m"
+    else:
+        diff = open_time - now
+        rem = f"⏳ Opens in {diff.seconds // 3600}h {(diff.seconds // 60) % 60}m"
+        
+    op_str = open_time.strftime("%I %p").lstrip('0')
+    cl_str = close_time.strftime("%I %p").lstrip('0')
+    timing_str = f"{op_str} - {cl_str}"
+    
+    return is_active, timing_str, rem
 
-def get_session_html(name, is_active, color):
+def get_session_html(name, is_active, color, timing_str, rem_str):
     bg_color = color if is_active else "#e0e0e0"
-    text_color = "white" if is_active else "#888888"
+    text_color = "white" if is_active else "#666666"
     status = "🟢 ACTIVE" if is_active else "⚪ CLOSED"
     shadow = "box-shadow: 0px 4px 10px rgba(0,0,0,0.2);" if is_active else ""
-    return f"<div class='session-box' style='background-color: {bg_color}; color: {text_color}; {shadow}'>{name}<br><span style='font-size: 0.8em; font-weight: normal;'>{status}</span></div>"
+    return f"""
+    <div class='session-box' style='background-color: {bg_color}; color: {text_color}; {shadow}'>
+        <div style='font-size: 1.1em; font-weight: bold;'>{name}</div>
+        <div style='font-size: 0.85em; opacity: 0.9; margin-bottom: 4px;'>{timing_str}</div>
+        <div style='font-size: 0.9em; font-weight: 500;'>{status}</div>
+        <div class='time-badge'>{rem_str}</div>
+    </div>
+    """
 
-# Session UI
+syd_active, syd_time, syd_rem = get_session_status(now_pkt, 3, 12)
+tok_active, tok_time, tok_rem = get_session_status(now_pkt, 5, 14)
+lon_active, lon_time, lon_rem = get_session_status(now_pkt, 12, 21)
+ny_active, ny_time, ny_rem = get_session_status(now_pkt, 17, 2)
+
 c1, c2, c3, c4 = st.columns(4)
-with c1: st.markdown(get_session_html("🇦🇺 Sydney", sydney_active, "#3498db"), unsafe_allow_html=True) # Blue
-with c2: st.markdown(get_session_html("🇯🇵 Tokyo", tokyo_active, "#9b59b6"), unsafe_allow_html=True)   # Purple
-with c3: st.markdown(get_session_html("🇬🇧 London", london_active, "#e67e22"), unsafe_allow_html=True) # Orange
-with c4: st.markdown(get_session_html("🇺🇸 New York", ny_active, "#e74c3c"), unsafe_allow_html=True)  # Red
-
+with c1: st.markdown(get_session_html("🇦🇺 Sydney", syd_active, "#3498db", syd_time, syd_rem), unsafe_allow_html=True)
+with c2: st.markdown(get_session_html("🇯🇵 Tokyo", tok_active, "#9b59b6", tok_time, tok_rem), unsafe_allow_html=True)
+with c3: st.markdown(get_session_html("🇬🇧 London", lon_active, "#e67e22", lon_time, lon_rem), unsafe_allow_html=True)
+with c4: st.markdown(get_session_html("🇺🇸 New York", ny_active, "#e74c3c", ny_time, ny_rem), unsafe_allow_html=True)
 
 # --- 1. COT REPORT (Information Only) ---
 st.subheader("📊 Institutional Sentiment (COT Data - Info Only)")
@@ -91,26 +125,22 @@ def analyze_market_structure(df):
     current_price = df['Close'].iloc[-1]
     structure, signal, angle = "➖ Range", "Neutral", 0
     
-    # Range
     if (abs(h1-h2) < tolerance and abs(h2-h3) < tolerance) and (abs(l1-l2) < tolerance and abs(l2-l3) < tolerance):
         structure = "➖ Range (Valid - 3+ Touches)"
         if current_price >= h3 * 0.999: signal = "🚨 Sell at Range Top (Wait for Upthrust)"
         elif current_price <= l3 * 1.001: signal = "🟢 Buy at Range Bottom (Wait for Spring)"
-    # Uptrend
     elif h3 > h2 and h2 > h1 and l3 > l2 and l2 > l1:
         structure = "📈 Uptrend Confirmed"
         angle = calculate_angle(h3 - h2, 5)
         if angle > (h1*0.0005):
             if current_price < h3 and current_price > l3: signal = "✅ Buy Pullback (Trend Continuation)"
         else: signal = "⚠️ Uptrend (Weak Angle - Caution)"
-    # Downtrend
     elif h3 < h2 and h2 < h1 and l3 < l2 and l2 < l1:
         structure = "📉 Downtrend Confirmed"
         angle = calculate_angle(l2 - l3, 5)
         if angle > (l1*0.0005):
             if current_price > l3 and current_price < h3: signal = "❌ Sell Pullback (Trend Continuation)"
         else: signal = "⚠️ Downtrend (Weak Angle - Caution)"
-    # Breakouts
     elif (h2 <= h1 + tolerance) and (h3 > h1):
         structure = "🚀 Upward Breakout Phase"
         if abs(current_price - h1) / h1 < 0.002: signal = "🟢 Safe Buy (Breakout Pullback)"
@@ -196,7 +226,7 @@ if not df_fx.empty:
                  .map(style_structure, subset=['PA Signal', 'Volume Confirm']), 
                  use_container_width=True, hide_index=True)
 
-# --- RECOMMENDATIONS (COT UNLOCKED) ---
+# --- RECOMMENDATIONS ---
 st.markdown("---")
 st.subheader("🎯 Active Trade Setups (PA + Volume Lock)")
 if not df_fx.empty:
