@@ -1,6 +1,7 @@
 import yfinance as yf
 import pandas as pd
 import streamlit as st
+import google.generativeai as genai
 import numpy as np
 import requests
 from datetime import datetime, timezone, timedelta, date
