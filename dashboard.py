@@ -324,3 +324,59 @@ if live_news:
         """, unsafe_allow_html=True)
 else:
     st.info("Live squawk feed is currently fetching or temporarily unavailable.")
+    import google.generativeai as genai
+
+# --- 6. GEMINI AI CO-PILOT (MARKET SUMMARY & RISK ANALYSIS) ---
+st.markdown("---")
+st.subheader("🧠 Gemini AI Co-Pilot (Live Market Analysis)")
+
+# Sidebar mein API key input box banayen taake screen clear rahay
+with st.sidebar:
+    st.markdown("### 🔑 AI Co-Pilot Settings")
+    api_key = st.text_input("Enter Gemini API Key:", type="password", help="Get a free key from Google AI Studio (aistudio.google.com)")
+
+if api_key:
+    genai.configure(api_key=api_key)
+    # Gemini Flash ya Pro model select karein
+    model = genai.GenerativeModel('gemini-1.5-flash') 
+
+    if st.button("🚀 Generate AI Market Analysis & Risk Report"):
+        with st.spinner("Gemini is analyzing Structure, Volume, and News... Please wait."):
+            try:
+                # Dashboard ka data text mein convert kar ke AI ko bhejne ki tayari
+                market_summary = df_fx.to_string() if not df_fx.empty else "No PA setups currently."
+                
+                # News ko text mein badalna (agar available ho)
+                try:
+                    news_summary = "\n".join([n['title'] for n in live_news]) if live_news else "No major squawk news."
+                except:
+                    news_summary = "News feed data not available."
+
+                # AI ko instructions (Prompt) dena
+                prompt = f"""
+                Aap ek expert quantitative forex trader aur risk manager hain. Niche diye gaye live market data (VSA/Price Action) aur taaza khabron ka jaiza lein:
+                
+                MARKET DATA (Pairs, Structure, PA Signal, Volume):
+                {market_summary}
+                
+                LATEST BREAKING NEWS:
+                {news_summary}
+                
+                Bataiye:
+                1. Market ka overall mood kya hai?
+                2. Kin pairs par sab se behtareen setup ban raha hai aur kyun?
+                3. RISKS & WARNINGS: Kya kisi setup mein ghalti ki gunjaish hai? (maslan weak angle, trap volume, ya kisi news ki wajah se market opposite ja sakti hai?). 
+                
+                Jawab point-to-point aur asaan Roman Urdu / English mix mein dein.
+                """
+
+                response = model.generate_content(prompt)
+                
+                st.success("✅ Analysis Complete!")
+                # AI ka jawab screen par dikhana
+                st.markdown(f"<div style='background-color: #e8f4f8; padding: 20px; border-radius: 10px; border-left: 5px solid #3498db;'>{response.text}</div>", unsafe_allow_html=True)
+                
+            except Exception as e:
+                st.error(f"⚠️ AI Analysis Error: Please check your API Key or connection. Detail: {e}")
+else:
+    st.info("👆 AI assistant ko on karne ke liye Sidebar (left side) mein apni Gemini API key enter karein.")
