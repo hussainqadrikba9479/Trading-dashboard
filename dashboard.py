@@ -12,6 +12,7 @@ st.markdown("""
     .main {background-color: #f4f6f9;}
     .sentiment-card {padding: 10px; border-radius: 8px; margin-bottom: 5px; color: white; font-weight: bold; text-align: center; font-size: 0.8rem;}
     .news-card {border-left: 6px solid #e74c3c; background-color: #ffffff; padding: 12px; border-radius: 8px; box-shadow: 0px 4px 6px rgba(0,0,0,0.1); margin-bottom: 10px;}
+    .session-box {padding: 10px; border-radius: 8px; text-align: center; font-weight: bold; margin-bottom: 15px; transition: 0.3s;}
     </style>
 """, unsafe_allow_html=True)
 
@@ -29,10 +30,32 @@ if trading_mode == "Backtest Mode (Historical)":
     max_date = date.today()
     selected_date = st.date_input("📅 Select Date for Backtest:", value=max_date, min_value=min_date, max_value=max_date)
 
-# --- Pakistan Time ---
+# --- Pakistan Time & Live Sessions ---
 pkt_timezone = timezone(timedelta(hours=5))
 now_pkt = datetime.now(pkt_timezone)
 st.info(f"🕒 **Last Updated:** {now_pkt.strftime('%I:%M:%S %p')} (PKT) | **Current Mode:** {trading_mode}")
+
+# Session Logic (PKT Timings)
+current_hour = now_pkt.hour
+sydney_active = 3 <= current_hour < 12
+tokyo_active = 5 <= current_hour < 14
+london_active = 12 <= current_hour < 21
+ny_active = current_hour >= 17 or current_hour < 2
+
+def get_session_html(name, is_active, color):
+    bg_color = color if is_active else "#e0e0e0"
+    text_color = "white" if is_active else "#888888"
+    status = "🟢 ACTIVE" if is_active else "⚪ CLOSED"
+    shadow = "box-shadow: 0px 4px 10px rgba(0,0,0,0.2);" if is_active else ""
+    return f"<div class='session-box' style='background-color: {bg_color}; color: {text_color}; {shadow}'>{name}<br><span style='font-size: 0.8em; font-weight: normal;'>{status}</span></div>"
+
+# Session UI
+c1, c2, c3, c4 = st.columns(4)
+with c1: st.markdown(get_session_html("🇦🇺 Sydney", sydney_active, "#3498db"), unsafe_allow_html=True) # Blue
+with c2: st.markdown(get_session_html("🇯🇵 Tokyo", tokyo_active, "#9b59b6"), unsafe_allow_html=True)   # Purple
+with c3: st.markdown(get_session_html("🇬🇧 London", london_active, "#e67e22"), unsafe_allow_html=True) # Orange
+with c4: st.markdown(get_session_html("🇺🇸 New York", ny_active, "#e74c3c"), unsafe_allow_html=True)  # Red
+
 
 # --- 1. COT REPORT (Information Only) ---
 st.subheader("📊 Institutional Sentiment (COT Data - Info Only)")
