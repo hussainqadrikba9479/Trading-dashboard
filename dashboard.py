@@ -331,9 +331,12 @@ else:
 st.markdown("---")
 st.subheader("🧠 Gemini AI Co-Pilot (Live Market Analysis)")
 
-with st.sidebar:
-    st.markdown("### 🔑 AI Co-Pilot Settings")
-    api_key = st.text_input("Enter Gemini API Key:", type="password", help="Get a free key from Google AI Studio")
+# API Key ab Streamlit Secrets se automatically aayegi (Sidebar wala dabba khatam)
+try:
+    api_key = st.secrets["GEMINI_API_KEY"]
+except KeyError:
+    api_key = None
+    st.error("⚠️ API Key not found! Please Streamlit App ki Settings > Secrets mein 'GEMINI_API_KEY' add karein.")
 
 if api_key:
     genai.configure(api_key=api_key)
@@ -341,27 +344,26 @@ if api_key:
     if st.button("🚀 Generate AI Market Analysis & Risk Report"):
         with st.spinner("Gemini is analyzing Structure, Volume, and News... Please wait."):
             try:
-                # 1. AUTO-DETECT MODEL (Error Fix)
+                # Auto-Detect Model
                 available_models = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
                 if not available_models:
-                    st.error("⚠️ Aap ki API key par koi text model available nahi hai. Nayi key banayen.")
+                    st.error("⚠️ Aap ki API key par koi text model available nahi hai.")
                 else:
-                    # Sab se pehla available model khud utha le ga
                     target_model = available_models[0] 
                     model = genai.GenerativeModel(target_model)
 
-                    # 2. DATA PREPARATION
+                    # Data Preparation
                     market_summary = df_fx.to_string() if not df_fx.empty else "No PA setups currently."
                     try:
                         news_summary = "\n".join([n['title'] for n in live_news]) if live_news else "No major squawk news."
                     except:
                         news_summary = "News feed data not available."
 
-                    # 3. PROMPT
+                    # Prompt for AI
                     prompt = f"""
                     Aap ek expert quantitative forex trader aur risk manager hain. Niche diye gaye live market data (VSA/Price Action) aur taaza khabron ka jaiza lein:
                     
-                    MARKET DATA (Pairs, Structure, PA Signal, Volume):
+                    MARKET DATA:
                     {market_summary}
                     
                     LATEST BREAKING NEWS:
@@ -375,13 +377,11 @@ if api_key:
                     Jawab point-to-point aur asaan Roman Urdu / English mix mein dein.
                     """
 
-                    # 4. GET RESPONSE
+                    # Getting Response
                     response = model.generate_content(prompt)
                     
                     st.success(f"✅ Analysis Complete! (Powered by {target_model})")
                     st.markdown(f"<div style='background-color: #e8f4f8; padding: 20px; border-radius: 10px; border-left: 5px solid #3498db;'>{response.text}</div>", unsafe_allow_html=True)
                 
             except Exception as e:
-                st.error(f"⚠️ AI Analysis Error: Please check your API Key or connection. Detail: {e}")
-else:
-    st.info("👆 AI assistant ko on karne ke liye Sidebar (left side) mein apni Gemini API key enter karein.")
+                st.error(f"⚠️ AI Analysis Error: {e}")
