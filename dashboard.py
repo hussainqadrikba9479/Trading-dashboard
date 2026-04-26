@@ -272,7 +272,7 @@ if not df_fx.empty:
 
 # --- RECOMMENDATIONS ---
 st.markdown("---")
-st.subheader("🎯 Active Trade Setups (PA + Volume Lock)")
+st.subheader("🎯 Active Trade Setups")
 if not df_fx.empty:
     strong = df_fx[df_fx['Score'] >= 8]
     weak = df_fx[df_fx['Score'] <= 3]
