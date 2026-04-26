@@ -10,11 +10,36 @@ from datetime import datetime, timezone, timedelta, date
 st.set_page_config(page_title="Global Trading Terminal", layout="wide")
 st.markdown("""
     <style>
-    .main {background-color: #f4f6f9;}
+    /* Background ko transparent karna taake config.toml wala dark theme sahi se apply ho */
+    .main {background-color: transparent;}
+    
+    /* News Cards - Professional TradingView Dark Look */
+    .news-card {
+        border-left: 6px solid #e74c3c; 
+        background-color: #1e222d; /* Dark card background */
+        color: #d1d4dc; /* Light Gray text for readability */
+        padding: 12px; 
+        border-radius: 8px; 
+        margin-bottom: 10px;
+        box-shadow: 0 4px 6px rgba(0,0,0,0.3); /* Thora 3D effect */
+    }
+    
+    /* News ke andar link ka color */
+    .news-card a { color: #3498db !important; text-decoration: none; }
+    .news-card a:hover { color: #2980b9 !important; text-decoration: underline; }
+    
     .sentiment-card {padding: 10px; border-radius: 8px; margin-bottom: 5px; color: white; font-weight: bold;}
-    .news-card {border-left: 6px solid #e74c3c; background-color: #ffffff; padding: 12px; border-radius: 5px;}
     .session-box {padding: 12px; border-radius: 8px; text-align: center; margin-bottom: 15px; transition: 0.3s;}
-    .time-badge {background: rgba(0,0,0,0.15); padding: 4px 8px; border-radius: 4px; display: inline-block; margin-top: 5px;}
+    
+    /* Time Badge */
+    .time-badge {
+        background: rgba(255,255,255,0.1); 
+        color: #d1d4dc;
+        padding: 4px 8px; 
+        border-radius: 4px; 
+        display: inline-block; 
+        margin-top: 5px;
+    }
     
     /* Streamlit ka default menu aur footer chupane ke liye */
     #MainMenu {visibility: hidden;}
@@ -23,12 +48,11 @@ st.markdown("""
     
     /* Scrollbar ko khoobsurat banane ke liye */
     ::-webkit-scrollbar {width: 6px; height: 6px;}
-    ::-webkit-scrollbar-track {background: transparent;}
+    ::-webkit-scrollbar-track {background: #0e1117;} /* App ke background jaisa */
     ::-webkit-scrollbar-thumb {background: #3498db; border-radius: 3px;}
     ::-webkit-scrollbar-thumb:hover {background: #2980b9;}
     </style>
-""", unsafe_allow_html=True)
-st.title(" Master Trading Terminal (PA + VSA)")
+""", unsafe_allow_html=True)st.title(" Master Trading Terminal (PA + VSA)")
 
 # --- Mode Selector ---
 st.markdown("### ⚙️ Select Trading Engine")
