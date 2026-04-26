@@ -22,7 +22,7 @@ st.title("🦅 Master Trading Terminal (PA + VSA)")
 
 # --- Mode Selector ---
 st.markdown("### ⚙️ Select Trading Engine")
-trading_mode = st.radio("Select Trading Engine", ["Intraday (H1 + M30)", "Swing Trading (D1 + H4)", "Backtest Mode (Historical)"], index=1)
+trading_mode = st.radio("Select Trading Engine", ["Intraday (H1 + M30)", "Swing Trading (D1 + H4)", "Backtest Mode (Historical)"], index=1, horizontal=True)
 
 # --- Backtest Calendar ---
 selected_date = None
