@@ -114,34 +114,6 @@ def load_cot_data():
 
 cot_df = load_cot_data()
 
-@st.cache_data(ttl=3600)
-def load_daily_oi():
-    try:
-        df = pd.read_excel("Daily_OI.xlsm", sheet_name="Data", engine='openpyxl')
-        
-        # Map Excel columns to our symbols
-        col_map = {
-            'USD (US)': 'USD', 'Euro FX Futures': 'EUR', 'British Pound Futures': 'GBP',
-            'Australian Dollar Futures': 'AUD', 'New Zealand Dollar Futures': 'NZD',
-            'Canadian Dollar Futures': 'CAD', 'Swiss Franc Futures': 'CHF',
-            'Japanese Yen Futures': 'JPY', 'Gold Futures': 'GOLD'
-        }
-        
-        oi_list = []
-        for excel_col, symbol in col_map.items():
-            if excel_col in df.columns:
-                # Get valid data ignoring empty/NaN cells
-                valid_data = df[excel_col].dropna().values
-                if len(valid_data) >= 2:
-                    curr_oi = valid_data[0]
-                    prev_oi = valid_data[1]
-                    change = curr_oi - prev_oi
-                    status = "Increasing 🟢" if change > 0 else "Decreasing 🔴"
-                    oi_list.append({'Instrument': symbol, 'Current OI': curr_oi, 'Status': status})
-        return pd.DataFrame(oi_list)
-    except: return pd.DataFrame()
-
-oi_df = load_daily_oi()
 
 @st.cache_data(ttl=300)
 def get_market_data(mode):
