@@ -11,23 +11,23 @@ st.set_page_config(page_title="Global Trading Terminal", layout="wide")
 st.markdown("""
     <style>
     .main {background-color: #f4f6f9;}
-    .sentiment-card {padding: 10px; border-radius: 8px; margin-bottom: 5px; color: white; font-weight: bold; text-align: center; font-size: 0.8rem;}
-    .news-card {border-left: 6px solid #e74c3c; background-color: #ffffff; padding: 12px; border-radius: 8px; box-shadow: 0px 4px 6px rgba(0,0,0,0.1); margin-bottom: 10px;}
+    .sentiment-card {padding: 10px; border-radius: 8px; margin-bottom: 5px; color: white; font-weight: bold;}
+    .news-card {border-left: 6px solid #e74c3c; background-color: #ffffff; padding: 12px; border-radius: 5px;}
     .session-box {padding: 12px; border-radius: 8px; text-align: center; margin-bottom: 15px; transition: 0.3s;}
-    .time-badge {background: rgba(0,0,0,0.15); padding: 4px 8px; border-radius: 4px; display: inline-block; font-size: 0.8em; margin-top: 5px;}
-    </style>
+    .time-badge {background: rgba(0,0,0,0.15); padding: 4px 8px; border-radius: 4px; display: inline-block; margin-top: 5px;}
+    
     /* Streamlit ka default menu aur footer chupane ke liye */
-        #MainMenu {visibility: hidden;}
-        footer {visibility: hidden;}
-        header {visibility: hidden;}
-        
-        /* Scrollbar ko khoobsurat banane ke liye */
-        ::-webkit-scrollbar {width: 6px; height: 6px;}
-        ::-webkit-scrollbar-track {background: transparent;}
-        ::-webkit-scrollbar-thumb {background: #3498db; border-radius: 3px;}
-        ::-webkit-scrollbar-thumb:hover {background: #2980b9;}
+    #MainMenu {visibility: hidden;}
+    footer {visibility: hidden;}
+    header {visibility: hidden;}
+    
+    /* Scrollbar ko khoobsurat banane ke liye */
+    ::-webkit-scrollbar {width: 6px; height: 6px;}
+    ::-webkit-scrollbar-track {background: transparent;}
+    ::-webkit-scrollbar-thumb {background: #3498db; border-radius: 3px;}
+    ::-webkit-scrollbar-thumb:hover {background: #2980b9;}
+    </style>
 """, unsafe_allow_html=True)
-
 st.title("🦅 Master Trading Terminal (PA + VSA)")
 
 # --- Mode Selector ---
