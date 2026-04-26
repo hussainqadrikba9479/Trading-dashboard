@@ -47,7 +47,7 @@ if not st.session_state.authenticated:
         st.markdown("</div>", unsafe_allow_html=True)
     st.stop()
 
-st.title("🦅 Master Trading Terminal (PA + VSA + COT)")
+st.title("🦅 Master Trading Terminal (PA + VSA + COT + OI)")
 
 # --- 2. Trading Engine Selector ---
 trading_mode = st.radio("⚙️ Select Trading Engine", ["Intraday (H1 + M30)", "Swing Trading (D1 + H4)"], index=1, horizontal=True)
@@ -114,6 +114,35 @@ def load_cot_data():
 
 cot_df = load_cot_data()
 
+@st.cache_data(ttl=3600)
+def load_daily_oi():
+    try:
+        df = pd.read_excel("Daily_OI.xlsx", sheet_name="Data", engine='openpyxl')
+        
+        # Map Excel columns to our symbols
+        col_map = {
+            'USD (US)': 'USD', 'Euro FX Futures': 'EUR', 'British Pound Futures': 'GBP',
+            'Australian Dollar Futures': 'AUD', 'New Zealand Dollar Futures': 'NZD',
+            'Canadian Dollar Futures': 'CAD', 'Swiss Franc Futures': 'CHF',
+            'Japanese Yen Futures': 'JPY', 'Gold Futures': 'GOLD'
+        }
+        
+        oi_list = []
+        for excel_col, symbol in col_map.items():
+            if excel_col in df.columns:
+                # Get valid data ignoring empty/NaN cells
+                valid_data = df[excel_col].dropna().values
+                if len(valid_data) >= 2:
+                    curr_oi = valid_data[0]
+                    prev_oi = valid_data[1]
+                    change = curr_oi - prev_oi
+                    status = "Increasing 🟢" if change > 0 else "Decreasing 🔴"
+                    oi_list.append({'Instrument': symbol, 'Current OI': curr_oi, 'Status': status})
+        return pd.DataFrame(oi_list)
+    except: return pd.DataFrame()
+
+oi_df = load_daily_oi()
+
 @st.cache_data(ttl=300)
 def get_market_data(mode):
     data_list = []
@@ -153,11 +182,11 @@ def get_live_squawk():
 live_news = get_live_squawk()
 
 # =========================================================================
-# --- TOP SECTION: OUTCOMES (COT & FOREX PAIRING LOGIC) ---
+# --- TOP SECTION: OUTCOMES (COT & OI & FOREX PAIRING LOGIC) ---
 # =========================================================================
 
 st.markdown("---")
-st.subheader("🎯 Active Trade Setups (PA + VSA + COT Locked)")
+st.subheader("🎯 Active Trade Setups (PA + VSA + COT + Daily OI Locked)")
 
 strong = df_fx[df_fx['Score'] >= 6]
 weak = df_fx[df_fx['Score'] <= 4]
@@ -168,15 +197,20 @@ if not strong.empty and not weak.empty:
         for _, w in weak.iterrows():
             c1, c2 = s['Instrument'], w['Instrument']
             
-            # COT Alignment Check
+            # 1. COT Alignment Check
             cot_align = True
             if not cot_df.empty:
                 s_sentiment = cot_df[cot_df['Instrument'].str.contains(c1, case=False)]['Direction'].values
                 if len(s_sentiment) > 0 and "Bearish" in s_sentiment[0]: cot_align = False
             
+            # 2. Daily OI Check (Trap Filter)
+            oi_align = True
+            if not oi_df.empty:
+                s_oi = oi_df[oi_df['Instrument'] == c1]['Status'].values
+                if len(s_oi) > 0 and "Decreasing" in s_oi[0]: oi_align = False
+            
             # Final Setup Generation
-            if cot_align and ("✅" in s['Volume Confirm'] or "✅" in w['Volume Confirm']):
-                # Standard Forex Pair Formatting
+            if cot_align and oi_align and ("✅" in s['Volume Confirm'] or "✅" in w['Volume Confirm']):
                 order = ['GOLD', 'EUR', 'GBP', 'AUD', 'NZD', 'USD', 'CAD', 'CHF', 'JPY']
                 try:
                     if order.index(c1) < order.index(c2): 
@@ -186,7 +220,7 @@ if not strong.empty and not weak.empty:
                         pair = f"{c2}{c1}"
                         action = "SELL"
                         
-                    st.success(f"🔥 **{action} {pair}** | Strength Ratio: {s['Score']} vs {w['Score']} | Smart Money Aligned 🚀")
+                    st.success(f"🔥 **{action} {pair}** | Strength: {s['Score']} vs {w['Score']} | Smart Money (COT+OI) Aligned 🚀")
                     found = True
                 except: pass
 
@@ -206,7 +240,7 @@ except: api_key = None; st.error("⚠️ API Key missing in Secrets!")
 if api_key:
     genai.configure(api_key=api_key)
     if st.button("🚀 Generate Institutional Report"):
-        with st.spinner("Gemini is processing your PA, Volume, COT, and News data..."):
+        with st.spinner("Gemini is processing your PA, Volume, COT, OI and News data..."):
             try:
                 available_models = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
                 target_model = available_models[0] if available_models else 'models/gemini-pro'
@@ -214,21 +248,21 @@ if api_key:
                 st.session_state.chat_session = model.start_chat(history=[])
                 st.session_state.chat_messages = [] 
                 
-                # Fetching All Data For Prompt
                 pa_data = df_fx.to_string() if not df_fx.empty else "No PA data."
                 cot_data = cot_df.to_string() if not cot_df.empty else "No COT data."
+                oi_data = oi_df.to_string() if not oi_df.empty else "No Daily OI data."
                 news_summary = "\n".join([n['title'] for n in live_news]) if live_news else "No major news."
                 
-                # Updated Prompt with News
                 prompt = f"""
                 Aap ek expert quantitative forex analyst hain. Niche diye gaye data ka jaiza lein:
                 1. PRICE ACTION & VOLUME: {pa_data}
-                2. INSTITUTIONAL POSITIONING (COT): {cot_data}
-                3. LATEST BREAKING NEWS: {news_summary}
+                2. INSTITUTIONAL COT DATA: {cot_data}
+                3. DAILY OPEN INTEREST (OI): {oi_data}
+                4. LATEST BREAKING NEWS: {news_summary}
                 
                 Bataiye:
                 1. Market ka overall mood kya hai?
-                2. Kin pairs par PA, Volume, COT, aur News sab align ho rahe hain (High Probability)?
+                2. Kin pairs par PA, Volume, COT, aur OI align ho rahe hain?
                 3. Risks aur trap warnings dein (News ka impact lazmi batayen).
                 
                 Jawab Roman Urdu mein point-by-point dein.
@@ -239,7 +273,6 @@ if api_key:
             except Exception as e:
                 st.error(f"AI Error: {e}")
                 
-    # Display Chat History
     if st.session_state.chat_messages:
         for msg in st.session_state.chat_messages:
             if msg["role"] == "assistant":
@@ -247,7 +280,6 @@ if api_key:
             else:
                 st.markdown(f"<div style='background-color: #2b3040; padding: 15px; border-radius: 10px; border-left: 5px solid #e74c3c; margin-bottom: 10px; text-align: right;'><b>👤 Aap:</b><br>{msg['content']}</div>", unsafe_allow_html=True)
         
-    # Follow-up Chat Input
     if st.session_state.chat_session:
         user_q = st.chat_input("AI se mazeed sawal puchein...")
         if user_q:
@@ -257,8 +289,7 @@ if api_key:
                     res = st.session_state.chat_session.send_message(f"Forex expert ki hasiyat se Roman Urdu mein is sawal ka jawab dein: {user_q}")
                     st.session_state.chat_messages.append({"role": "assistant", "content": res.text})
                     st.rerun()
-                except Exception as e:
-                    st.error(f"Error: {e}")
+                except Exception as e: st.error(f"Error: {e}")
 
 # =========================================================================
 # --- BOTTOM SECTION: DATA TABLES & NEWS FEED ---
@@ -268,8 +299,6 @@ st.markdown("---")
 col_l, col_r = st.columns(2)
 with col_l:
     st.subheader("🔍 Price Action Analysis")
-    
-    # Custom Styling for DataFrame (Strength Colors)
     def style_score(val):
         if val >= 6: return 'background-color: rgba(46, 204, 113, 0.2); color: #2ecc71; font-weight: bold'
         elif val <= 4: return 'background-color: rgba(231, 76, 60, 0.2); color: #e74c3c; font-weight: bold'
@@ -286,10 +315,12 @@ with col_l:
     else: st.write("Fetching technicals...")
 
 with col_r:
-    st.subheader("📊 Institutional Positioning (COT)")
-    if not cot_df.empty:
-        st.dataframe(cot_df.head(15), use_container_width=True, hide_index=True)
-    else: st.write("Loading COT data...")
+    st.subheader("📊 Smart Money (COT & Daily OI)")
+    st.markdown("**1. Weekly COT Sentiment:**")
+    if not cot_df.empty: st.dataframe(cot_df.head(10), use_container_width=True, hide_index=True)
+    st.markdown("**2. Daily Futures Open Interest:**")
+    if not oi_df.empty: st.dataframe(oi_df, use_container_width=True, hide_index=True)
+    else: st.write("Daily_OI.xlsx not found or loading...")
 
 # --- LIVE NEWS SQUAWK ---
 st.markdown("---")
