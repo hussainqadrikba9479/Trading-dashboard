@@ -117,7 +117,7 @@ cot_df = load_cot_data()
 @st.cache_data(ttl=3600)
 def load_daily_oi():
     try:
-        df = pd.read_excel("Daily_OI.xlsx", sheet_name="Data", engine='openpyxl')
+        df = pd.read_excel("Daily_OI.xlsm", sheet_name="Data", engine='openpyxl')
         
         # Map Excel columns to our symbols
         col_map = {
