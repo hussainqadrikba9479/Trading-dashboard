@@ -45,7 +45,8 @@ if not st.session_state.authenticated:
         st.subheader("🔒 Restricted Access")
         st.write("Is terminal ko use karne ke liye password enter karein.")
         
-        pwd = st.text_input("Enter Password:", type="password")
+       # 'label_visibility' aur 'key' add karne se browser isay save karne ki option deta hai
+pwd = st.text_input("Enter Password:", type="password", key="login_pwd")
         
         if st.button("Login 🚀", use_container_width=True):
             try:
