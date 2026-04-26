@@ -328,7 +328,7 @@ else:
     st.info("Live squawk feed is fetching...")
 
 
-# --- 6. GEMINI AI CO-PILOT (MARKET SUMMARY & LIVE CHAT) ---
+# --- 6. GEMINI AI CO-PILOT (MARKET SUMMARY, COT ALIGNMENT & LIVE CHAT) ---
 st.markdown("---")
 st.subheader("🧠 Gemini AI Co-Pilot (Live Market Analysis & Chat)")
 
@@ -349,8 +349,8 @@ if api_key:
     genai.configure(api_key=api_key)
 
     # Main Analysis Button
-    if st.button("🚀 Generate New Market Analysis"):
-        with st.spinner("Gemini is analyzing Structure, Volume, and News... Please wait."):
+    if st.button("🚀 Generate High-Probability Market Analysis"):
+        with st.spinner("Gemini is aligning VSA, Strength, COT Data, and News... Please wait."):
             try:
                 available_models = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
                 if not available_models:
@@ -362,27 +362,42 @@ if api_key:
                     st.session_state.chat_session = model.start_chat(history=[])
                     st.session_state.chat_messages = [] 
 
-                    # Safe Data Fetching
+                    # Safe Data Fetching (Technical + News + COT)
                     try:
-                        market_summary = df_fx.to_string() if not df_fx.empty else "No PA setups currently."
+                        market_summary = df_fx.to_string() if not df_fx.empty else "Technical table data missing."
                     except NameError:
                         market_summary = "Technical table data missing."
-                        
+                    
+                    # COT data ko fetch karna (Assuming dataframe ka naam df_cot ya isi tarah ka kuch hai)
+                    try:
+                        cot_summary = df_cot.to_string() if 'df_cot' in globals() and not df_cot.empty else "COT data not available in memory."
+                    except NameError:
+                        cot_summary = "COT data not available."
+
                     try:
                         news_summary = "\n".join([n['title'] for n in live_news]) if live_news else "No major squawk news."
                     except NameError:
                         news_summary = "News feed data not available."
 
+                    # Naya aur Powerful Prompt
                     prompt = f"""
-                    Aap ek expert quantitative forex trader aur risk manager hain. Niche diye gaye live market data aur taaza khabron ka jaiza lein:
-                    MARKET DATA: {market_summary}
-                    LATEST NEWS: {news_summary}
+                    Aap ek expert quantitative forex trader aur risk manager hain. Niche diye gaye live market data (Currency Strength, VSA), Institutional COT data, aur taaza khabron ka jaiza lein aur inko aapas mein align karein:
+                    
+                    1. TECHNICAL & VSA DATA (Currency Strength & Volume): 
+                    {market_summary}
+                    
+                    2. INSTITUTIONAL COT DATA (Smart Money Positioning):
+                    {cot_summary}
+                    
+                    3. LATEST BREAKING NEWS: 
+                    {news_summary}
                     
                     Bataiye:
-                    1. Market ka overall mood kya hai?
-                    2. Kin pairs par sab se behtareen setup ban raha hai aur kyun?
-                    3. RISKS & WARNINGS: Kya kisi setup mein trap hai?
-                    Jawab Roman Urdu mein dein.
+                    1. Market ka overall mood aur Smart Money (Commercials/Non-Commercials) ka rujhan kya hai?
+                    2. HIGH-PROBABILITY SETUPS: Kin pairs par sab se behtareen setup ban raha hai jahan VSA, Currency Strength, aur COT teeno ek hi direction mein align ho rahe hain? (Tafseel se batayen kyun).
+                    3. RISKS & WARNINGS: Kya kisi setup mein 'Divergence' ya trap hai? (Maslan technical/VSA buy de raha ho lekin COT sell mein ho, ya news khilaf ho).
+                    
+                    Jawab strictly aur asaan Roman Urdu mein dein.
                     """
 
                     response = st.session_state.chat_session.send_message(prompt)
@@ -394,7 +409,7 @@ if api_key:
 
     # Display Chat History
     if st.session_state.chat_messages:
-        st.success("✅ Analysis Active! Ab aap neechay mazeed sawalaat pooch sakte hain.")
+        st.success("✅ Multi-Timeframe & COT Alignment Active! Ab aap neechay mazeed sawalaat pooch sakte hain.")
         for msg in st.session_state.chat_messages:
             if msg["role"] == "assistant":
                 st.markdown(f"<div style='background-color: #e8f4f8; padding: 20px; border-radius: 10px; border-left: 5px solid #3498db; margin-bottom: 10px;'><b>🤖 AI Co-Pilot:</b><br>{msg['content']}</div>", unsafe_allow_html=True)
@@ -403,7 +418,7 @@ if api_key:
 
     # Chat Input Box
     if st.session_state.chat_session:
-        user_question = st.chat_input("AI se mazeed sawal puchein (Jaise: JPY ko kis ke sath sell karun?)...")
+        user_question = st.chat_input("AI se mazeed sawal puchein (Jaise: COT data ke mutabiq USD ka next trend kya hai?)...")
         
         if user_question:
             st.session_state.chat_messages.append({"role": "user", "content": user_question})
@@ -415,4 +430,5 @@ if api_key:
                     st.session_state.chat_messages.append({"role": "assistant", "content": response.text})
                     st.rerun()
                 except Exception as e:
+                    st.error(f"⚠️ Error: {e}")
                     st.error(f"⚠️ Error: {e}")
