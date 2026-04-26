@@ -234,8 +234,11 @@ with tab_terminal:
     if "chat_session" not in st.session_state: st.session_state.chat_session = None
     if "chat_messages" not in st.session_state: st.session_state.chat_messages = []
 
-    try: api_key = st.secrets["GEMINI_API_KEY"]
-except: api_key = None; st.error("⚠️ API Key missing in Secrets!")
+    try:
+        api_key = st.secrets["GEMINI_API_KEY"]
+    except:
+        api_key = None
+        st.error("⚠️ API Key missing in Secrets!")
 
     if api_key:
         genai.configure(api_key=api_key)
