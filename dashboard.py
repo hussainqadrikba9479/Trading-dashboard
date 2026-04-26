@@ -89,11 +89,16 @@ def get_session_html(name, is_active, color, timing_str, rem_str):
         <div style='font-size: 0.9em; font-weight: 500; margin-top:5px;'>{status}</div>
         <div class='time-badge'>{rem_str}</div></div>"""
 
+syd_a, syd_t, syd_r = get_session_status(now_pkt, 3, 12)
+tok_a, tok_t, tok_r = get_session_status(now_pkt, 5, 14)
+lon_a, lon_t, lon_r = get_session_status(now_pkt, 12, 21)
+ny_a, ny_t, ny_r = get_session_status(now_pkt, 17, 2)
+
 c1, c2, c3, c4 = st.columns(4)
-with c1: st.markdown(get_session_html("🇦🇺 Sydney", *get_session_status(now_pkt, 3, 12), "#3498db"), unsafe_allow_html=True)
-with c2: st.markdown(get_session_html("🇯🇵 Tokyo", *get_session_status(now_pkt, 5, 14), "#9b59b6"), unsafe_allow_html=True)
-with c3: st.markdown(get_session_html("🇬🇧 London", *get_session_status(now_pkt, 12, 21), "#e67e22"), unsafe_allow_html=True)
-with c4: st.markdown(get_session_html("🇺🇸 New York", *get_session_status(now_pkt, 17, 2), "#e74c3c"), unsafe_allow_html=True)
+with c1: st.markdown(get_session_html("🇦🇺 Sydney", syd_a, "#3498db", syd_t, syd_r), unsafe_allow_html=True)
+with c2: st.markdown(get_session_html("🇯🇵 Tokyo", tok_a, "#9b59b6", tok_t, tok_r), unsafe_allow_html=True)
+with c3: st.markdown(get_session_html("🇬🇧 London", lon_a, "#e67e22", lon_t, lon_r), unsafe_allow_html=True)
+with c4: st.markdown(get_session_html("🇺🇸 New York", ny_a, "#e74c3c", ny_t, ny_r), unsafe_allow_html=True)
 
 # =========================================================================
 # --- BACKEND DATA ENGINE ---
