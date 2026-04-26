@@ -16,6 +16,16 @@ st.markdown("""
     .session-box {padding: 12px; border-radius: 8px; text-align: center; margin-bottom: 15px; transition: 0.3s;}
     .time-badge {background: rgba(0,0,0,0.15); padding: 4px 8px; border-radius: 4px; display: inline-block; font-size: 0.8em; margin-top: 5px;}
     </style>
+    /* Streamlit ka default menu aur footer chupane ke liye */
+        #MainMenu {visibility: hidden;}
+        footer {visibility: hidden;}
+        header {visibility: hidden;}
+        
+        /* Scrollbar ko khoobsurat banane ke liye */
+        ::-webkit-scrollbar {width: 6px; height: 6px;}
+        ::-webkit-scrollbar-track {background: transparent;}
+        ::-webkit-scrollbar-thumb {background: #3498db; border-radius: 3px;}
+        ::-webkit-scrollbar-thumb:hover {background: #2980b9;}
 """, unsafe_allow_html=True)
 
 st.title("🦅 Master Trading Terminal (PA + VSA)")
