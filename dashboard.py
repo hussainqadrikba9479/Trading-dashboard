@@ -45,7 +45,7 @@ if not st.session_state.authenticated:
         st.subheader("🔒 Restricted Access")
         st.write("Is terminal ko use karne ke liye password enter karein.")
         
-        pwd = st.text_input("Enter Password:", type="password", key="login_pwd")
+        pwd = st.text_input("Enter Password:", type="password", key="login_pwd", help="Password enter kar ke Login ka button dabayen.")
         
         if st.button("Login 🚀", use_container_width=True):
             try:
