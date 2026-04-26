@@ -325,16 +325,15 @@ if api_key:
 st.markdown("---")
 st.subheader("🧮 Weekly Currency Strength Matrix")
 def style_matrix(val):
-    if val == '⬆': return 'color: #2ecc71; font-weight: bold; text-align: center; font-size: 16px;'
-    if val == '⬇': return 'color: #e74c3c; font-weight: bold; text-align: center; font-size: 16px;'
-    if val == '↔': return 'color: #f39c12; font-weight: bold; text-align: center; font-size: 16px;'
+    if val == '⬆': return 'color: #2ecc71; font-weight: bold; text-align: center; font-size: 22px;'
+    if val == '⬇': return 'color: #e74c3c; font-weight: bold; text-align: center; font-size: 22px;'
+    if val == '↔': return 'color: #f39c12; font-weight: bold; text-align: center; font-size: 22px;'
     if val == '': return 'background-color: #1e222d;' 
     if isinstance(val, (int, float)):
-        if val > 0: return 'background-color: rgba(46, 204, 113, 0.2); color: #2ecc71; font-weight: bold; text-align: center;'
-        if val < 0: return 'background-color: rgba(231, 76, 60, 0.2); color: #e74c3c; font-weight: bold; text-align: center;'
-        return 'color: gray; font-weight: bold; text-align: center;'
+        if val > 0: return 'background-color: rgba(46, 204, 113, 0.2); color: #2ecc71; font-weight: bold; text-align: center; font-size: 18px;'
+        if val < 0: return 'background-color: rgba(231, 76, 60, 0.2); color: #e74c3c; font-weight: bold; text-align: center; font-size: 18px;'
+        return 'color: gray; font-weight: bold; text-align: center; font-size: 18px;'
     return ''
-
 if not matrix_df.empty:
     st.dataframe(matrix_df.style.map(style_matrix), use_container_width=True)
 else:
