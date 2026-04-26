@@ -355,9 +355,9 @@ live_news = get_live_squawk_news()
 if live_news:
     for news in live_news:
         st.markdown(f"""
-        <div class='news-card' style='border-left: 6px solid #3498db; background-color: #f0f8ff; padding: 12px; margin-bottom: 8px; border-radius: 5px;'>
-            <b>⚡ {news['title']}</b><br>
-            <small style='color: #555;'>{news['time']} | <a href='{news['link']}' target='_blank' style='color: #3498db; text-decoration: none; font-weight: bold;'>Read Full Update</a></small>
+        <div class='news-card'>
+            <b style='color: #fafafa;'>⚡ {news['title']}</b><br>
+            <small style='color: #a0a0a0;'>{news['time']} | <a href='{news['link']}' target='_blank' style='color: #3498db; text-decoration: none; font-weight: bold;'>Read Full Update</a></small>
         </div>
         """, unsafe_allow_html=True)
 else:
