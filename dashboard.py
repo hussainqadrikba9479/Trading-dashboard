@@ -47,7 +47,7 @@ if not st.session_state.authenticated:
         st.markdown("</div>", unsafe_allow_html=True)
     st.stop()
 
-st.title("🦅 Master Trading Terminal (PA + VSA + COT + OI)")
+st.title("🦅 Master Trading Terminal (PA + Matrix + COT + OI)")
 
 # --- 2. Trading Engine Selector ---
 trading_mode = st.radio("⚙️ Select Trading Engine", ["Intraday (H1 + M30)", "Swing Trading (D1 + H4)"], index=1, horizontal=True)
@@ -117,32 +117,20 @@ def load_daily_oi():
     try:
         df = pd.read_excel("Daily_OI.xlsm", sheet_name="Data", engine='openpyxl')
         df.columns = df.columns.astype(str).str.replace('\n', ' ').str.replace('\r', '')
-        
-        col_map = {
-            'USD': 'USD', 'Euro': 'EUR', 'Pound': 'GBP',
-            'Australian': 'AUD', 'Zealand': 'NZD',
-            'Canadian': 'CAD', 'Swiss': 'CHF',
-            'Yen': 'JPY', 'Gold': 'GOLD'
-        }
-        
+        col_map = {'USD': 'USD', 'Euro': 'EUR', 'Pound': 'GBP', 'Australian': 'AUD', 'Zealand': 'NZD', 'Canadian': 'CAD', 'Swiss': 'CHF', 'Yen': 'JPY', 'Gold': 'GOLD'}
         oi_list = []
         for keyword, symbol in col_map.items():
             matched_col = next((col for col in df.columns if keyword.lower() in col.lower()), None)
             if matched_col:
                 valid_data = pd.to_numeric(df[matched_col], errors='coerce').dropna().values
                 if len(valid_data) >= 2:
-                    curr_oi = valid_data[0]
-                    prev_oi = valid_data[1]
+                    curr_oi, prev_oi = valid_data[0], valid_data[1]
                     change = curr_oi - prev_oi
                     status = "Increasing 🟢" if change > 0 else "Decreasing 🔴"
                     oi_list.append({'Instrument': symbol, 'Current OI': int(curr_oi), 'Status': status})
-        
-        if not oi_list:
-            return pd.DataFrame([{'Instrument': '⚠️ Error', 'Status': 'Excel headings format mismatch.'}])
+        if not oi_list: return pd.DataFrame([{'Instrument': '⚠️ Error', 'Status': 'Excel format mismatch.'}])
         return pd.DataFrame(oi_list)
-        
-    except Exception as e: 
-        return pd.DataFrame([{'Instrument': '⚠️ Error', 'Status': str(e)}])
+    except Exception as e: return pd.DataFrame([{'Instrument': '⚠️ Error', 'Status': str(e)}])
 
 @st.cache_data(ttl=300)
 def get_market_data(mode):
@@ -161,14 +149,52 @@ def get_market_data(mode):
             else: score = 3 if close < df['Low'].iloc[-5] else 4
             
             vol_confirm = "✅ Vol Confirmed" if vol > avg_vol else "No Volume Confirm"
-            data_list.append({
-                'Instrument': name, 
-                'Structure': 'Uptrend' if close > sma else 'Downtrend',
-                'PA Signal': 'Buy Pullback' if score >= 6 else 'Sell Pullback' if score <= 4 else 'Neutral',
-                'Volume Confirm': vol_confirm, 'Score': score
-            })
+            data_list.append({'Instrument': name, 'Structure': 'Uptrend' if close > sma else 'Downtrend', 'PA Signal': 'Buy Pullback' if score >= 6 else 'Sell Pullback' if score <= 4 else 'Neutral', 'Volume Confirm': vol_confirm, 'Score': score})
         except: pass
     return pd.DataFrame(data_list)
+
+@st.cache_data(ttl=3600)
+def get_currency_matrix():
+    currencies = ['EUR', 'GBP', 'AUD', 'NZD', 'USD', 'CAD', 'CHF', 'JPY']
+    matrix_df = pd.DataFrame(index=currencies, columns=currencies + ['TOTAL'])
+    
+    tickers, pairs_map = [], {}
+    for i in range(len(currencies)):
+        for j in range(i+1, len(currencies)):
+            pair = f"{currencies[i]}{currencies[j]}=X"
+            tickers.append(pair)
+            pairs_map[pair] = (currencies[i], currencies[j])
+            
+    try:
+        df = yf.download(tickers, period="1mo", interval="1d", progress=False)
+        closes = df['Close'] if isinstance(df.columns, pd.MultiIndex) else df
+        scores = {c: 0 for c in currencies}
+        
+        for ticker in tickers:
+            c1, c2 = pairs_map[ticker]
+            try:
+                pair_data = closes[ticker].dropna()
+                curr = pair_data.iloc[-1]
+                sma = pair_data.rolling(20).mean().iloc[-1]
+                diff = (curr - sma) / sma
+                
+                if diff > 0.002: # c1 strong, c2 weak
+                    matrix_df.loc[c1, c2], matrix_df.loc[c2, c1] = '⬆', '⬇'
+                    scores[c1] += 1; scores[c2] -= 1
+                elif diff < -0.002: # c1 weak, c2 strong
+                    matrix_df.loc[c1, c2], matrix_df.loc[c2, c1] = '⬇', '⬆'
+                    scores[c1] -= 1; scores[c2] += 1
+                else: # Sideways
+                    matrix_df.loc[c1, c2], matrix_df.loc[c2, c1] = '↔', '↔'
+            except:
+                matrix_df.loc[c1, c2], matrix_df.loc[c2, c1] = '-', '-'
+                
+        for c in currencies:
+            matrix_df.loc[c, c] = '' # Diagonal
+            matrix_df.loc[c, 'TOTAL'] = scores[c]
+            
+        return matrix_df.sort_values(by='TOTAL', ascending=False)
+    except: return pd.DataFrame()
 
 @st.cache_data(ttl=120)
 def get_live_squawk():
@@ -178,10 +204,10 @@ def get_live_squawk():
         return [{'title': i.find('title').text, 'link': i.find('link').text, 'time': i.find('pubDate').text} for i in root.findall('.//item')[:5]]
     except: return []
 
-# Variables defined in Global Scope to avoid NameError
 cot_df = load_cot_data()
 oi_df = load_daily_oi()
 df_fx = get_market_data(trading_mode)
+matrix_df = get_currency_matrix()
 live_news = get_live_squawk()
 
 # =========================================================================
@@ -200,19 +226,16 @@ if not strong.empty and not weak.empty:
         for _, w in weak.iterrows():
             c1, c2 = s['Instrument'], w['Instrument']
             
-            # 1. COT Alignment Check
             cot_align = True
             if not cot_df.empty:
                 s_sentiment = cot_df[cot_df['Instrument'].str.contains(c1, case=False)]['Direction'].values
                 if len(s_sentiment) > 0 and "Bearish" in s_sentiment[0]: cot_align = False
             
-            # 2. Daily OI Check
             oi_align = True
             if not oi_df.empty and 'Status' in oi_df.columns:
                 s_oi = oi_df[oi_df['Instrument'] == c1]['Status'].values
                 if len(s_oi) > 0 and "Decreasing" in s_oi[0]: oi_align = False
             
-            # Final Setup Generation
             if cot_align and oi_align and ("✅" in s['Volume Confirm'] or "✅" in w['Volume Confirm']):
                 order = ['GOLD', 'EUR', 'GBP', 'AUD', 'NZD', 'USD', 'CAD', 'CHF', 'JPY']
                 try:
@@ -254,14 +277,16 @@ if api_key:
                 pa_data = df_fx.to_string() if not df_fx.empty else "No PA data."
                 cot_data = cot_df.to_string() if not cot_df.empty else "No COT data."
                 oi_data = oi_df.to_string() if not oi_df.empty else "No Daily OI data."
+                matrix_data = matrix_df.to_string() if not matrix_df.empty else "No Matrix data."
                 news_summary = "\n".join([n['title'] for n in live_news]) if live_news else "No major news."
                 
                 prompt = f"""
                 Aap ek expert quantitative forex analyst hain. Niche diye gaye data ka jaiza lein:
                 1. PRICE ACTION & VOLUME: {pa_data}
-                2. INSTITUTIONAL COT DATA: {cot_data}
-                3. DAILY OPEN INTEREST (OI): {oi_data}
-                4. LATEST BREAKING NEWS: {news_summary}
+                2. CURRENCY STRENGTH MATRIX: {matrix_data}
+                3. INSTITUTIONAL COT DATA: {cot_data}
+                4. DAILY OPEN INTEREST (OI): {oi_data}
+                5. LATEST BREAKING NEWS: {news_summary}
                 
                 Bataiye:
                 1. Market ka overall mood kya hai?
@@ -295,6 +320,27 @@ if api_key:
                 except Exception as e: st.error(f"Error: {e}")
 
 # =========================================================================
+# --- MIDDLE SECTION: CURRENCY STRENGTH MATRIX ---
+# =========================================================================
+st.markdown("---")
+st.subheader("🧮 Weekly Currency Strength Matrix")
+def style_matrix(val):
+    if val == '⬆': return 'color: #2ecc71; font-weight: bold; text-align: center; font-size: 16px;'
+    if val == '⬇': return 'color: #e74c3c; font-weight: bold; text-align: center; font-size: 16px;'
+    if val == '↔': return 'color: #f39c12; font-weight: bold; text-align: center; font-size: 16px;'
+    if val == '': return 'background-color: #1e222d;' 
+    if isinstance(val, (int, float)):
+        if val > 0: return 'background-color: rgba(46, 204, 113, 0.2); color: #2ecc71; font-weight: bold; text-align: center;'
+        if val < 0: return 'background-color: rgba(231, 76, 60, 0.2); color: #e74c3c; font-weight: bold; text-align: center;'
+        return 'color: gray; font-weight: bold; text-align: center;'
+    return ''
+
+if not matrix_df.empty:
+    st.dataframe(matrix_df.style.map(style_matrix), use_container_width=True)
+else:
+    st.write("Calculating Weekly Matrix from 28 cross pairs...")
+
+# =========================================================================
 # --- BOTTOM SECTION: DATA TABLES & NEWS FEED ---
 # =========================================================================
 
@@ -319,8 +365,6 @@ with col_l:
 
 with col_r:
     st.subheader("📊 Smart Money (COT & Daily OI)")
-    
-    # --- 1. COT Data with Colors ---
     st.markdown("**1. Weekly COT Sentiment:**")
     def style_cot(val):
         try:
@@ -333,18 +377,16 @@ with col_r:
         styled_cot = cot_df.head(10).style.map(style_cot, subset=['Net Change'])
         st.dataframe(styled_cot, use_container_width=True, hide_index=True)
         
-    # --- 2. Daily OI Data with Colors ---
     st.markdown("**2. Daily Futures Open Interest:**")
     def style_oi(val):
         if 'Increasing' in str(val): return 'background-color: rgba(46, 204, 113, 0.1); color: #2ecc71; font-weight: bold'
         if 'Decreasing' in str(val): return 'background-color: rgba(231, 76, 60, 0.1); color: #e74c3c; font-weight: bold'
         return ''
         
-    if not oi_df.empty:
+    if not oi_df.empty and 'Status' in oi_df.columns:
         styled_oi = oi_df.style.map(style_oi, subset=['Status'])
         st.dataframe(styled_oi, use_container_width=True, hide_index=True)
-    else: 
-        st.write("Daily_OI.xlsm not found or loading...")
+    else: st.write("Daily_OI.xlsm not found or loading...")
 
 # --- LIVE NEWS SQUAWK ---
 st.markdown("---")
