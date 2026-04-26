@@ -112,8 +112,37 @@ def load_cot_data():
         return df_cot.dropna(subset=['Instrument'])
     except: return pd.DataFrame()
 
-cot_df = load_cot_data()
-
+@st.cache_data(ttl=3600)
+def load_daily_oi():
+    try:
+        df = pd.read_excel("Daily_OI.xlsm", sheet_name="Data", engine='openpyxl')
+        df.columns = df.columns.astype(str).str.replace('\n', ' ').str.replace('\r', '')
+        
+        col_map = {
+            'USD': 'USD', 'Euro': 'EUR', 'Pound': 'GBP',
+            'Australian': 'AUD', 'Zealand': 'NZD',
+            'Canadian': 'CAD', 'Swiss': 'CHF',
+            'Yen': 'JPY', 'Gold': 'GOLD'
+        }
+        
+        oi_list = []
+        for keyword, symbol in col_map.items():
+            matched_col = next((col for col in df.columns if keyword.lower() in col.lower()), None)
+            if matched_col:
+                valid_data = pd.to_numeric(df[matched_col], errors='coerce').dropna().values
+                if len(valid_data) >= 2:
+                    curr_oi = valid_data[0]
+                    prev_oi = valid_data[1]
+                    change = curr_oi - prev_oi
+                    status = "Increasing 🟢" if change > 0 else "Decreasing 🔴"
+                    oi_list.append({'Instrument': symbol, 'Current OI': int(curr_oi), 'Status': status})
+        
+        if not oi_list:
+            return pd.DataFrame([{'Instrument': '⚠️ Error', 'Status': 'Excel headings format mismatch.'}])
+        return pd.DataFrame(oi_list)
+        
+    except Exception as e: 
+        return pd.DataFrame([{'Instrument': '⚠️ Error', 'Status': str(e)}])
 
 @st.cache_data(ttl=300)
 def get_market_data(mode):
@@ -141,8 +170,6 @@ def get_market_data(mode):
         except: pass
     return pd.DataFrame(data_list)
 
-df_fx = get_market_data(trading_mode)
-
 @st.cache_data(ttl=120)
 def get_live_squawk():
     try:
@@ -151,6 +178,10 @@ def get_live_squawk():
         return [{'title': i.find('title').text, 'link': i.find('link').text, 'time': i.find('pubDate').text} for i in root.findall('.//item')[:5]]
     except: return []
 
+# Variables defined in Global Scope to avoid NameError
+cot_df = load_cot_data()
+oi_df = load_daily_oi()
+df_fx = get_market_data(trading_mode)
 live_news = get_live_squawk()
 
 # =========================================================================
@@ -175,9 +206,9 @@ if not strong.empty and not weak.empty:
                 s_sentiment = cot_df[cot_df['Instrument'].str.contains(c1, case=False)]['Direction'].values
                 if len(s_sentiment) > 0 and "Bearish" in s_sentiment[0]: cot_align = False
             
-            # 2. Daily OI Check (Trap Filter)
+            # 2. Daily OI Check
             oi_align = True
-            if not oi_df.empty:
+            if not oi_df.empty and 'Status' in oi_df.columns:
                 s_oi = oi_df[oi_df['Instrument'] == c1]['Status'].values
                 if len(s_oi) > 0 and "Decreasing" in s_oi[0]: oi_align = False
             
@@ -292,7 +323,7 @@ with col_r:
     if not cot_df.empty: st.dataframe(cot_df.head(10), use_container_width=True, hide_index=True)
     st.markdown("**2. Daily Futures Open Interest:**")
     if not oi_df.empty: st.dataframe(oi_df, use_container_width=True, hide_index=True)
-    else: st.write("Daily_OI.xlsx not found or loading...")
+    else: st.write("Daily_OI.xlsm not found or loading...")
 
 # --- LIVE NEWS SQUAWK ---
 st.markdown("---")
