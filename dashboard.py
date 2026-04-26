@@ -148,7 +148,7 @@ def get_live_squawk():
 live_news = get_live_squawk()
 
 # =========================================================================
-# --- TOP SECTION: OUTCOMES (ACTIONABLE ITEMS FIRST) ---
+# --- TOP SECTION: OUTCOMES (COT & FOREX PAIRING LOGIC) ---
 # =========================================================================
 
 st.markdown("---")
@@ -161,14 +161,29 @@ found = False
 if not strong.empty and not weak.empty:
     for _, s in strong.iterrows():
         for _, w in weak.iterrows():
+            c1, c2 = s['Instrument'], w['Instrument']
+            
+            # COT Alignment Check
             cot_align = True
             if not cot_df.empty:
-                s_sentiment = cot_df[cot_df['Instrument'].str.contains(s['Instrument'], case=False)]['Direction'].values
+                s_sentiment = cot_df[cot_df['Instrument'].str.contains(c1, case=False)]['Direction'].values
                 if len(s_sentiment) > 0 and "Bearish" in s_sentiment[0]: cot_align = False
             
+            # Final Setup Generation
             if cot_align and ("✅" in s['Volume Confirm'] or "✅" in w['Volume Confirm']):
-                st.success(f"🔥 **BUY {s['Instrument']}{w['Instrument']}** | Score: {s['Score']} vs {w['Score']} | Smart Money Aligned 🚀")
-                found = True
+                # Standard Forex Pair Formatting
+                order = ['GOLD', 'EUR', 'GBP', 'AUD', 'NZD', 'USD', 'CAD', 'CHF', 'JPY']
+                try:
+                    if order.index(c1) < order.index(c2): 
+                        pair = f"{c1}{c2}"
+                        action = "BUY"
+                    else: 
+                        pair = f"{c2}{c1}"
+                        action = "SELL"
+                        
+                    st.success(f"🔥 **{action} {pair}** | Strength Ratio: {s['Score']} vs {w['Score']} | Smart Money Aligned 🚀")
+                    found = True
+                except: pass
 
 if not found:
     st.info("Filhal criteria par koi trade setup nahi mila. Searching for institutional alignments...")
@@ -186,28 +201,30 @@ except: api_key = None; st.error("⚠️ API Key missing in Secrets!")
 if api_key:
     genai.configure(api_key=api_key)
     if st.button("🚀 Generate Institutional Report"):
-        with st.spinner("Gemini is processing your PA, Volume, and COT data..."):
+        with st.spinner("Gemini is processing your PA, Volume, COT, and News data..."):
             try:
-                # ✅ FIX: Auto-Detect Model (Yeh error 404 ko hamesha ke liye khatam kar dega)
                 available_models = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
                 target_model = available_models[0] if available_models else 'models/gemini-pro'
                 model = genai.GenerativeModel(target_model)
-                
                 st.session_state.chat_session = model.start_chat(history=[])
                 st.session_state.chat_messages = [] 
                 
+                # Fetching All Data For Prompt
                 pa_data = df_fx.to_string() if not df_fx.empty else "No PA data."
                 cot_data = cot_df.to_string() if not cot_df.empty else "No COT data."
+                news_summary = "\n".join([n['title'] for n in live_news]) if live_news else "No major news."
                 
+                # Updated Prompt with News
                 prompt = f"""
                 Aap ek expert quantitative forex analyst hain. Niche diye gaye data ka jaiza lein:
                 1. PRICE ACTION & VOLUME: {pa_data}
                 2. INSTITUTIONAL POSITIONING (COT): {cot_data}
+                3. LATEST BREAKING NEWS: {news_summary}
                 
                 Bataiye:
                 1. Market ka overall mood kya hai?
-                2. Kin pairs par PA, Volume aur COT teeno align ho rahe hain (High Probability)?
-                3. Risks aur trap warnings dein.
+                2. Kin pairs par PA, Volume, COT, aur News sab align ho rahe hain (High Probability)?
+                3. Risks aur trap warnings dein (News ka impact lazmi batayen).
                 
                 Jawab Roman Urdu mein point-by-point dein.
                 """
@@ -246,12 +263,30 @@ st.markdown("---")
 col_l, col_r = st.columns(2)
 with col_l:
     st.subheader("🔍 Price Action Analysis")
-    st.dataframe(df_fx, use_container_width=True, hide_index=True)
+    
+    # Custom Styling for DataFrame (Strength Colors)
+    def style_score(val):
+        if val >= 6: return 'background-color: rgba(46, 204, 113, 0.2); color: #2ecc71; font-weight: bold'
+        elif val <= 4: return 'background-color: rgba(231, 76, 60, 0.2); color: #e74c3c; font-weight: bold'
+        return ''
+
+    def style_structure(val):
+        if 'Uptrend' in str(val) or 'Buy' in str(val) or '✅' in str(val): return 'color: #2ecc71; font-weight: bold'
+        if 'Downtrend' in str(val) or 'Sell' in str(val) or '❌' in str(val) or '🚨' in str(val): return 'color: #e74c3c; font-weight: bold'
+        return ''
+    
+    if not df_fx.empty:
+        styled_df = df_fx.style.map(style_score, subset=['Score']).map(style_structure, subset=['Structure', 'PA Signal', 'Volume Confirm'])
+        st.dataframe(styled_df, use_container_width=True, hide_index=True)
+    else: st.write("Fetching technicals...")
+
 with col_r:
     st.subheader("📊 Institutional Positioning (COT)")
-    st.dataframe(cot_df.head(15), use_container_width=True, hide_index=True)
+    if not cot_df.empty:
+        st.dataframe(cot_df.head(15), use_container_width=True, hide_index=True)
+    else: st.write("Loading COT data...")
 
-# --- LIVE NEWS SQUAWK (Moved to Bottom) ---
+# --- LIVE NEWS SQUAWK ---
 st.markdown("---")
 st.subheader("📰 Live Breaking News (Forex Squawk)")
 if live_news:
