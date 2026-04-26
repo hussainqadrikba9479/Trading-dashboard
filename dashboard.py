@@ -18,7 +18,7 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-st.title("🦅 Master Trading Terminal (PA + VSA + Backtester)")
+st.title("🦅 Master Trading Terminal (PA + VSA)")
 
 # --- Mode Selector ---
 st.markdown("### ⚙️ Select Trading Engine")
