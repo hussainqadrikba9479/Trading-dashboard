@@ -42,6 +42,9 @@ def get_session_status(now, open_h, close_h):
     open_time = now.replace(hour=open_h, minute=0, second=0, microsecond=0)
     close_time = now.replace(hour=close_h, minute=0, second=0, microsecond=0)
     
+    # 🚨 Weekend Logic (5 = Saturday, 6 = Sunday)
+    is_weekend = now.weekday() >= 5
+    
     if open_h > close_h: # Overnight Session (e.g., NY 17 to 02)
         if now.hour >= open_h or now.hour < close_h:
             is_active = True
@@ -54,13 +57,18 @@ def get_session_status(now, open_h, close_h):
         if not is_active and now.hour >= close_h:
             open_time += timedelta(days=1)
             
-    if is_active:
-        diff = close_time - now
-        rem = f"⏳ Closes in {diff.seconds // 3600}h {(diff.seconds // 60) % 60}m"
+    # Agar weekend hai toh status aur time tabdeel kar do
+    if is_weekend:
+        is_active = False
+        rem = "⏸️ Weekend (Market Closed)"
     else:
-        diff = open_time - now
-        rem = f"⏳ Opens in {diff.seconds // 3600}h {(diff.seconds // 60) % 60}m"
-        
+        if is_active:
+            diff = close_time - now
+            rem = f"⏳ Closes in {diff.seconds // 3600}h {(diff.seconds // 60) % 60}m"
+        else:
+            diff = open_time - now
+            rem = f"⏳ Opens in {diff.seconds // 3600}h {(diff.seconds // 60) % 60}m"
+            
     op_str = open_time.strftime("%I %p").lstrip('0')
     cl_str = close_time.strftime("%I %p").lstrip('0')
     timing_str = f"{op_str} - {cl_str}"
@@ -91,7 +99,6 @@ with c1: st.markdown(get_session_html("🇦🇺 Sydney", syd_active, "#3498db", 
 with c2: st.markdown(get_session_html("🇯🇵 Tokyo", tok_active, "#9b59b6", tok_time, tok_rem), unsafe_allow_html=True)
 with c3: st.markdown(get_session_html("🇬🇧 London", lon_active, "#e67e22", lon_time, lon_rem), unsafe_allow_html=True)
 with c4: st.markdown(get_session_html("🇺🇸 New York", ny_active, "#e74c3c", ny_time, ny_rem), unsafe_allow_html=True)
-
 # --- 1. COT REPORT (Information Only) ---
 st.subheader("📊 Institutional Sentiment (COT Data - Info Only)")
 @st.cache_data(ttl=3600)
