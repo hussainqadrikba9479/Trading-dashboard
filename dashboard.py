@@ -52,7 +52,9 @@ st.markdown("""
     ::-webkit-scrollbar-thumb {background: #3498db; border-radius: 3px;}
     ::-webkit-scrollbar-thumb:hover {background: #2980b9;}
     </style>
-""", unsafe_allow_html=True)st.title(" Master Trading Terminal (PA + VSA)")
+""", unsafe_allow_html=True)st.title
+
+(" Master Trading Terminal (PA + VSA)")
 
 # --- Mode Selector ---
 st.markdown("### ⚙️ Select Trading Engine")
