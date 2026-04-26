@@ -45,21 +45,22 @@ if not st.session_state.authenticated:
         st.subheader("🔒 Restricted Access")
         st.write("Is terminal ko use karne ke liye password enter karein.")
         
-       # 'label_visibility' aur 'key' add karne se browser isay save karne ki option deta hai
-pwd = st.text_input("Enter Password:", type="password", key="login_pwd")
+        pwd = st.text_input("Enter Password:", type="password", key="login_pwd")
         
         if st.button("Login 🚀", use_container_width=True):
             try:
                 correct_password = st.secrets["TERMINAL_PASSWORD"]
             except KeyError:
-                correct_password = "admin" # Agar secret set nahi kiya toh default 'admin' chalega
+                correct_password = "admin"
                 
             if pwd == correct_password:
                 st.session_state.authenticated = True
                 st.rerun()
             else:
-                st.error("❌ Ghalat Password! Koshish jari rakhein.")
+                st.error("❌ Ghalat Password!")
         st.markdown("</div>", unsafe_allow_html=True)
+    
+    st.stop()
     
     st.stop() # Yeh command neechay ka sara code rok degi jab tak login na ho
 # ==========================================
