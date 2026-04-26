@@ -173,7 +173,7 @@ if not strong.empty and not weak.empty:
 if not found:
     st.info("Filhal criteria par koi trade setup nahi mila. Searching for institutional alignments...")
 
-# --- AI CO-PILOT (Directly Below Setups) ---
+# --- AI CO-PILOT ---
 st.markdown("---")
 st.subheader("🧠 Gemini AI Co-Pilot (Live Chat & Analysis)")
 
@@ -188,7 +188,11 @@ if api_key:
     if st.button("🚀 Generate Institutional Report"):
         with st.spinner("Gemini is processing your PA, Volume, and COT data..."):
             try:
-                model = genai.GenerativeModel('gemini-1.5-flash')
+                # ✅ FIX: Auto-Detect Model (Yeh error 404 ko hamesha ke liye khatam kar dega)
+                available_models = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
+                target_model = available_models[0] if available_models else 'models/gemini-pro'
+                model = genai.GenerativeModel(target_model)
+                
                 st.session_state.chat_session = model.start_chat(history=[])
                 st.session_state.chat_messages = [] 
                 
