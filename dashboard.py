@@ -368,21 +368,78 @@ if live_news:
 else:
     st.info("Live squawk feed is fetching...")
 
-# --- 6. HIGH IMPACT NEWS CALENDAR ---
+# --- 6. HIGH IMPACT NEWS CALENDAR (FOREX FACTORY STYLE) ---
 st.markdown("---")
-st.subheader("🚨 High Impact News")
+st.subheader("🚨 High Impact News Calendar")
+
 @st.cache_data(ttl=600)
-def get_news():
+def get_news_calendar():
     try:
         url = "https://nfs.faireconomy.media/ff_calendar_thisweek.json"
         data = requests.get(url, timeout=10).json()
-        for event in data:
-            if event.get('impact') == 'High':
-                try:
-                    dt_obj = datetime.fromisoformat(event['date'])
-                    pkt_dt = dt_obj.astimezone(pkt_timezone)
-                    if pkt_dt.date() >= now_pkt.date():
-                        st.markdown(f"<div class='news-card'><b>🔴 {event['country']} - {event['title']}</b><br><small>{pkt_dt.strftime('%d %b | %I:%M %p')} (PKT)</small></div>", unsafe_allow_html=True)
-                except: pass
-    except: pass
-get_news()
+        high_impact = [e for e in data if e.get('impact') == 'High']
+        return high_impact
+    except:
+        return []
+
+news_data = get_news_calendar()
+
+if news_data:
+    # News ko date ke hisab se group karne ke liye dictionary
+    news_by_date = {}
+    
+    for event in news_data:
+        try:
+            dt_obj = datetime.fromisoformat(event['date'])
+            pkt_dt = dt_obj.astimezone(pkt_timezone)
+            date_str = pkt_dt.strftime("%A, %d %b %Y")
+            
+            if date_str not in news_by_date:
+                news_by_date[date_str] = []
+            
+            # Status check: Kya news guzar chuki hai?
+            is_past = pkt_dt < now_pkt
+            
+            news_by_date[date_str].append({
+                'time': pkt_dt.strftime('%I:%M %p'),
+                'currency': event['country'],
+                'event': event['title'],
+                'is_past': is_past
+            })
+        except: continue
+
+    # UI Table Render karna
+    for day, events in news_by_date.items():
+        st.markdown(f"#### 📅 {day}")
+        
+        # Table Header
+        html_code = """
+        <table style='width:100%; border-collapse: collapse; margin-bottom: 20px; background-color: #1e222d; border-radius: 8px; overflow: hidden;'>
+            <tr style='background-color: #2b3040; color: #fafafa; text-align: left;'>
+                <th style='padding: 12px;'>Time (PKT)</th>
+                <th style='padding: 12px;'>Currency</th>
+                <th style='padding: 12px;'>Event</th>
+            </tr>
+        """
+        
+        for e in events:
+            # Guzri hui news ke liye style (Faded)
+            if e['is_past']:
+                row_style = "color: #555bc2; opacity: 0.5;" # Light blue/grey faded
+                icon = "⚪"
+            else:
+                row_style = "color: #fafafa; font-weight: bold;" # Bright white
+                icon = "🔴"
+                
+            html_code += f"""
+            <tr style='border-bottom: 1px solid #2b3040; {row_style}'>
+                <td style='padding: 10px;'>{e['time']}</td>
+                <td style='padding: 10px;'><b>{e['currency']}</b></td>
+                <td style='padding: 10px;'>{icon} {e['event']}</td>
+            </tr>
+            """
+        
+        html_code += "</table>"
+        st.markdown(html_code, unsafe_allow_html=True)
+else:
+    st.info("Calendar data fetching...")
