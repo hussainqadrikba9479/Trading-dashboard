@@ -319,11 +319,32 @@ with col_l:
 
 with col_r:
     st.subheader("📊 Smart Money (COT & Daily OI)")
+    
+    # --- 1. COT Data with Colors ---
     st.markdown("**1. Weekly COT Sentiment:**")
-    if not cot_df.empty: st.dataframe(cot_df.head(10), use_container_width=True, hide_index=True)
+    def style_cot(val):
+        try:
+            if float(val) > 0: return 'background-color: rgba(46, 204, 113, 0.1); color: #2ecc71; font-weight: bold'
+            elif float(val) < 0: return 'background-color: rgba(231, 76, 60, 0.1); color: #e74c3c; font-weight: bold'
+        except: pass
+        return ''
+        
+    if not cot_df.empty:
+        styled_cot = cot_df.head(10).style.map(style_cot, subset=['Net Change'])
+        st.dataframe(styled_cot, use_container_width=True, hide_index=True)
+        
+    # --- 2. Daily OI Data with Colors ---
     st.markdown("**2. Daily Futures Open Interest:**")
-    if not oi_df.empty: st.dataframe(oi_df, use_container_width=True, hide_index=True)
-    else: st.write("Daily_OI.xlsm not found or loading...")
+    def style_oi(val):
+        if 'Increasing' in str(val): return 'background-color: rgba(46, 204, 113, 0.1); color: #2ecc71; font-weight: bold'
+        if 'Decreasing' in str(val): return 'background-color: rgba(231, 76, 60, 0.1); color: #e74c3c; font-weight: bold'
+        return ''
+        
+    if not oi_df.empty:
+        styled_oi = oi_df.style.map(style_oi, subset=['Status'])
+        st.dataframe(styled_oi, use_container_width=True, hide_index=True)
+    else: 
+        st.write("Daily_OI.xlsm not found or loading...")
 
 # --- LIVE NEWS SQUAWK ---
 st.markdown("---")
