@@ -41,18 +41,18 @@ if not st.session_state.authenticated:
     st.markdown("<br><br>", unsafe_allow_html=True)
     col1, col2, col3 = st.columns([1, 2, 1])
     with col2:
-        st.markdown("<div style='background-color: #1e222d; padding: 30px; border-radius: 10px; text-align: center; box-shadow: 0 4px 10px rgba(0,0,0,0.5);'>", unsafe_allow_html=True)
+        st.markdown("<div style='background-color: #1e222d; padding: 30px; border-radius: 10px; text-align: center;'>", unsafe_allow_html=True)
         st.subheader("🔒 Restricted Access")
-        st.write("Is terminal ko use karne ke liye password enter karein.")
         
-        pwd = st.text_input("Enter Password:", type="password", key="login_pwd", help="Password enter kar ke Login ka button dabayen.")
+        # Form ke baghair normal input use karein but 'key' change karein
+        pwd = st.text_input("Enter Password & Press Enter:", type="password", key="final_login_key")
         
-        if st.button("Login 🚀", use_container_width=True):
-            try:
-                correct_password = st.secrets["TERMINAL_PASSWORD"]
-            except KeyError:
-                correct_password = "admin"
-                
+        try:
+            correct_password = st.secrets["TERMINAL_PASSWORD"]
+        except:
+            correct_password = "admin"
+
+        if pwd: # Jaise hi aap Enter dabayenge
             if pwd == correct_password:
                 st.session_state.authenticated = True
                 st.rerun()
