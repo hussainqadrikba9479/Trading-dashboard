@@ -4,3 +4,4 @@ streamlit
 requests
 openpyxl
 google-generativeai
+streamlit-autorefresh
