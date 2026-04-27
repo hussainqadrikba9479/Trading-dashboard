@@ -350,7 +350,47 @@ with tab_terminal:
             st.dataframe(styled_oi, use_container_width=True, hide_index=True)
         else: st.write("Daily_OI.xlsm not found or loading...")
 
-    FOREX FACTORY STYLE CALENDAR
+    # --- NEWS & CALENDAR ---
+    st.markdown("---")
+    st.subheader("📰 Live Breaking News (Forex Squawk)")
+    if live_news:
+        for n in live_news: st.markdown(f"<div class='news-card'><b>⚡ {n['title']}</b><br><small>{n['time']}</small></div>", unsafe_allow_html=True)
+    else: st.warning("Squawk feed currently unavailable.")
+
+    # --- FOREX FACTORY STYLE CALENDAR (FIXED) ---
+    st.markdown("---")
+    st.subheader("📅 High Impact & Bank Holidays Calendar")
+    try:
+        cal_data = requests.get("https://nfs.faireconomy.media/ff_calendar_thisweek.json").json()
+        news_by_date = {}
+        for e in cal_data:
+            # Added Bank Holidays
+            if e.get('impact') in ['High', 'Holiday']:
+                dt = datetime.fromisoformat(e['date']).astimezone(pkt_timezone)
+                d_str = dt.strftime("%A, %d %b %Y")
+                if d_str not in news_by_date: news_by_date[d_str] = []
+                news_by_date[d_str].append({
+                    'time': 'All Day' if e.get('impact') == 'Holiday' else dt.strftime('%I:%M %p'), 
+                    'curr': e['country'], 
+                    'title': e['title'], 
+                    'past': dt < now_pkt,
+                    'impact': e.get('impact')
+                })
+        for day, events in news_by_date.items():
+            with st.expander(f"📅 {day}", expanded=True):
+                for ev in events:
+                    c1, c2, c3 = st.columns([1, 1, 3])
+                    icon = "🔴" if ev['impact'] == 'High' else "⚫"
+                    if ev['past']:
+                        c1.markdown(f"~~{ev['time']}~~")
+                        c2.markdown(f"~~{ev['curr']}~~")
+                        c3.markdown(f"⚪ *{ev['title']} (Passed)*")
+                    else:
+                        c1.markdown(f"**{ev['time']}**")
+                        c2.markdown(f"**{ev['curr']}**")
+                        c3.markdown(f"{icon} **{ev['title']}**")
+    except: st.write("Calendar loading...")
+
 # =========================================================================
 # --- TAB 2: RISK MANAGER (MONEY MANAGEMENT) ---
 # =========================================================================
