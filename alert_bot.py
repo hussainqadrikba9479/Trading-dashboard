@@ -88,20 +88,17 @@ def get_live_squawk():
 def run_bot():
     print("🔄 Starting 30-Min Market Scan...")
     
-    # Initialize AI
-try:
-    api_key = st.secrets["GEMINI_API_KEY"]
-    genai.configure(api_key=api_key)
-    
-    # Auto-Detect Model (Google se khud poochay ga)
-    available_models = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
-    best_model = available_models[0] # Jo model available ho wo utha lo
-    ai_model = genai.GenerativeModel(best_model)
-except Exception as e:
-    st.error(f"AI Error: {e}")
-    api_key = None
+   # Initialize AI
+    api_key = os.environ.get("GEMINI_API_KEY")
     ai_model = None
-
+    if api_key:
+        try:
+            genai.configure(api_key=api_key)
+            available_models = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
+            best_model = available_models[0]
+            ai_model = genai.GenerativeModel(best_model)
+        except Exception as e:
+            print(f"AI Initialization Error: {e}")
     # Load Data (Same as Dashboard)
     trading_mode = "Swing Trading (D1 + H4)" # Aap ka selected mode
     cot_df = load_cot_data()
