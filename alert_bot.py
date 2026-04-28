@@ -93,7 +93,7 @@ def run_bot():
     ai_model = None
     if api_key:
         genai.configure(api_key=api_key)
-        ai_model = genai.GenerativeModel('models/gemini-pro')
+        ai_model = genai.GenerativeModel('gemini-1.5-pro')
 
     # Load Data (Same as Dashboard)
     trading_mode = "Swing Trading (D1 + H4)" # Aap ka selected mode
