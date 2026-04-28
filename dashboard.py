@@ -148,7 +148,7 @@ def get_live_squawk():
 try:
     api_key = st.secrets["GEMINI_API_KEY"]
     genai.configure(api_key=api_key)
-    ai_model = genai.GenerativeModel('gemini-1.5-pro')
+    ai_model = genai.GenerativeModel('gemini-1.5-flash')
 except:
     api_key = None
     ai_model = None
