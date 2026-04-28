@@ -160,7 +160,7 @@ tab_terminal, tab_risk, tab_psych = st.tabs(["🦅 Trading Terminal", "💰 Risk
 # --- TAB 1: TRADING TERMINAL ---
 # =========================================================================
 with tab_terminal:
-    st.title("🦅 Master AI-Verified Terminal")
+        st.title("📈 Master Trading AI Verified Terminal")
     trading_mode = st.radio("⚙️ Select Trading Engine", ["Intraday (H1 + M30)", "Swing Trading (D1 + H4)"], index=1, horizontal=True)
 
     pkt_timezone = timezone(timedelta(hours=5))
