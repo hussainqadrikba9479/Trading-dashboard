@@ -89,11 +89,18 @@ def run_bot():
     print("🔄 Starting 30-Min Market Scan...")
     
     # Initialize AI
-    api_key = os.environ.get("GEMINI_API_KEY")
+try:
+    api_key = st.secrets["GEMINI_API_KEY"]
+    genai.configure(api_key=api_key)
+    
+    # Auto-Detect Model (Google se khud poochay ga)
+    available_models = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
+    best_model = available_models[0] # Jo model available ho wo utha lo
+    ai_model = genai.GenerativeModel(best_model)
+except Exception as e:
+    st.error(f"AI Error: {e}")
+    api_key = None
     ai_model = None
-    if api_key:
-        genai.configure(api_key=api_key)
-        ai_model = genai.GenerativeModel('gemini-1.5-flash')
 
     # Load Data (Same as Dashboard)
     trading_mode = "Swing Trading (D1 + H4)" # Aap ka selected mode
