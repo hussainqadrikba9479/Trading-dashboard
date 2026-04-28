@@ -165,4 +165,6 @@ except Exception as e:
         print("💤 No active institutional setup found right now. Sleeping till next cycle.")
 
 if __name__ == "__main__":
+    print("📧 Sending Manual Test Email...")
+    send_email_alert("🚀 Hussain Algo: Connection Test", "Alhamdulillah! Aap ka 24/7 Bot ab emails bhej raha hai aur AI verification bhi theek kaam kar rahi hai.")
     run_bot()
