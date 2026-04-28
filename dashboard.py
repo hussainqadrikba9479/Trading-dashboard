@@ -1,44 +1,21 @@
 import yfinance as yf
 import pandas as pd
-import streamlit as st
 import google.generativeai as genai
 import requests
-import xml.etree.ElementTree as ET
-import random
 import smtplib
+import os
+import xml.etree.ElementTree as ET
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from datetime import datetime, timezone, timedelta
-from streamlit_autorefresh import st_autorefresh
-
-# --- 1. Dashboard Setup & Theme ---
-st.set_page_config(page_title="Global Trading Terminal", layout="wide")
-
-# --- AUTO REFRESH (Every 30 Minutes) ---
-count = st_autorefresh(interval=1800000, limit=None, key="dashboard_refresh_30")
-
-st.markdown("""
-    <style>
-    .main {background-color: transparent;}
-    .news-card {border-left: 6px solid #e74c3c; background-color: #1e222d; color: #d1d4dc; padding: 12px; border-radius: 8px; margin-bottom: 10px; box-shadow: 0 4px 6px rgba(0,0,0,0.3);}
-    .session-box {padding: 12px; border-radius: 8px; text-align: center; margin-bottom: 15px; transition: 0.3s;}
-    .time-badge {background: rgba(255,255,255,0.1); color: #d1d4dc; padding: 4px 8px; border-radius: 4px; display: inline-block; margin-top: 5px;}
-    .psych-box {background-color: #1e222d; padding: 20px; border-radius: 10px; border-left: 5px solid #f1c40f; margin-bottom: 20px;}
-    .quote-text {font-style: italic; font-size: 1.2em; color: #f1c40f;}
-    #MainMenu {visibility: hidden;} footer {visibility: hidden;} header {visibility: hidden;}
-    ::-webkit-scrollbar {width: 6px; height: 6px;}
-    ::-webkit-scrollbar-track {background: #0e1117;} 
-    ::-webkit-scrollbar-thumb {background: #3498db; border-radius: 3px;}
-    </style>
-""", unsafe_allow_html=True)
 
 # --- EMAIL ALERT FUNCTION ---
 def send_email_alert(subject, body):
+    sender_email = os.environ.get("EMAIL_SENDER")
+    sender_password = os.environ.get("EMAIL_PASSWORD")
+    receiver_email = os.environ.get("EMAIL_RECEIVER", sender_email)
+    
     try:
-        sender_email = st.secrets["EMAIL_SENDER"]
-        sender_password = st.secrets["EMAIL_PASSWORD"]
-        receiver_email = st.secrets.get("EMAIL_RECEIVER", sender_email)
-        
         msg = MIMEMultipart()
         msg['From'] = sender_email
         msg['To'] = receiver_email
@@ -50,17 +27,13 @@ def send_email_alert(subject, body):
         server.login(sender_email, sender_password)
         server.send_message(msg)
         server.quit()
+        print("✅ Alert Email Sent Successfully!")
     except Exception as e:
-        pass 
-
-# Initialize Memories (Anti-Spam & AI Cache)
-if "sent_alerts" not in st.session_state: st.session_state.sent_alerts = set()
-if "ai_verdicts" not in st.session_state: st.session_state.ai_verdicts = {}
+        print(f"❌ Email Error: {e}")
 
 # =========================================================================
-# --- BACKEND DATA FUNCTIONS ---
+# --- SAME BACKEND DATA FUNCTIONS (Identical to Dashboard) ---
 # =========================================================================
-@st.cache_data(ttl=1800)
 def load_cot_data():
     try:
         df_cot = pd.read_excel("COT.xlsm", sheet_name="Main", engine='openpyxl', usecols="A,B,G,K,P", skiprows=2, header=None)
@@ -68,7 +41,6 @@ def load_cot_data():
         return df_cot.dropna(subset=['Instrument'])
     except: return pd.DataFrame()
 
-@st.cache_data(ttl=1800)
 def load_daily_oi():
     try:
         df = pd.read_excel("Daily_OI.xlsm", sheet_name="Data", engine='openpyxl')
@@ -84,11 +56,9 @@ def load_daily_oi():
                     change = curr_oi - prev_oi
                     status = "Increasing 🟢" if change > 0 else "Decreasing 🔴"
                     oi_list.append({'Instrument': symbol, 'Current OI': int(curr_oi), 'Status': status})
-        if not oi_list: return pd.DataFrame([{'Instrument': '⚠️ Error', 'Status': 'Excel format mismatch.'}])
         return pd.DataFrame(oi_list)
-    except Exception as e: return pd.DataFrame([{'Instrument': '⚠️ Error', 'Status': str(e)}])
+    except: return pd.DataFrame()
 
-@st.cache_data(ttl=1800)
 def get_market_data(mode):
     data_list = []
     symbols = {'USD': 'DX-Y.NYB', 'GOLD': 'GC=F', 'EUR': '6E=F', 'GBP': '6B=F', 'JPY': '6J=F', 'AUD': '6A=F', 'CAD': '6C=F', 'CHF': '6S=F'}
@@ -107,336 +77,99 @@ def get_market_data(mode):
         except: pass
     return pd.DataFrame(data_list)
 
-@st.cache_data(ttl=1800)
-def get_currency_matrix():
-    currencies = ['EUR', 'GBP', 'AUD', 'NZD', 'USD', 'CAD', 'CHF', 'JPY']
-    matrix_df = pd.DataFrame(index=currencies, columns=currencies + ['TOTAL'])
-    tickers, pairs_map = [], {}
-    for i in range(len(currencies)):
-        for j in range(i+1, len(currencies)):
-            pair = f"{currencies[i]}{currencies[j]}=X"; tickers.append(pair); pairs_map[pair] = (currencies[i], currencies[j])
-    try:
-        df = yf.download(tickers, period="1mo", interval="1d", progress=False)
-        closes = df['Close'] if isinstance(df.columns, pd.MultiIndex) else df
-        scores = {c: 0 for c in currencies}
-        for ticker in tickers:
-            c1, c2 = pairs_map[ticker]
-            try:
-                pair_data = closes[ticker].dropna()
-                curr, sma = pair_data.iloc[-1], pair_data.rolling(20).mean().iloc[-1]
-                diff = (curr - sma) / sma
-                if diff > 0.002: 
-                    matrix_df.loc[c1, c2], matrix_df.loc[c2, c1] = '⬆', '⬇'; scores[c1] += 1; scores[c2] -= 1
-                elif diff < -0.002:
-                    matrix_df.loc[c1, c2], matrix_df.loc[c2, c1] = '⬇', '⬆'; scores[c1] -= 1; scores[c2] += 1
-                else: matrix_df.loc[c1, c2], matrix_df.loc[c2, c1] = '↔', '↔'
-            except: matrix_df.loc[c1, c2], matrix_df.loc[c2, c1] = '-', '-'
-        for c in currencies:
-            matrix_df.loc[c, c] = ''; matrix_df.loc[c, 'TOTAL'] = scores[c]
-        return matrix_df.sort_values(by='TOTAL', ascending=False)
-    except: return pd.DataFrame()
-
-@st.cache_data(ttl=1800)
 def get_live_squawk():
     try:
         r = requests.get("https://www.forexlive.com/feed", headers={'User-Agent': 'Mozilla/5.0'}, timeout=10)
         root = ET.fromstring(r.content)
-        return [{'title': i.find('title').text, 'link': i.find('link').text, 'time': i.find('pubDate').text} for i in root.findall('.//item')[:5]]
+        return [{'title': i.find('title').text} for i in root.findall('.//item')[:5]]
     except: return []
 
-# Initialize AI
-try:
-    api_key = st.secrets["GEMINI_API_KEY"]
-    genai.configure(api_key=api_key)
+# --- MAIN BOT LOGIC ---
+def run_bot():
+    print("🔄 Starting 30-Min Market Scan...")
     
-    # Auto-Detect Model (Google se khud poochay ga)
-    available_models = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
-    best_model = available_models[0] # Jo model available ho wo utha lo
-    ai_model = genai.GenerativeModel(best_model)
-except Exception as e:
-    st.error(f"AI Error: {e}")
-    api_key = None
+    # Initialize AI
+    api_key = os.environ.get("GEMINI_API_KEY")
     ai_model = None
-
-# --- Initialize Tabs ---
-tab_terminal, tab_risk, tab_psych = st.tabs(["🦅 Trading Terminal", "💰 Risk Manager", "🧠 Mindset & Psychology"])
-
-# =========================================================================
-# --- TAB 1: TRADING TERMINAL ---
-# =========================================================================
-with tab_terminal:
-    st.title("📈 Master Trading AI Verified Terminal")
-    trading_mode = st.radio("⚙️ Select Trading Engine", ["Intraday (H1 + M30)", "Swing Trading (D1 + H4)"], index=1, horizontal=True)
-
-    pkt_timezone = timezone(timedelta(hours=5))
-    now_pkt = datetime.now(pkt_timezone)
-    st.info(f"🕒 **Live Clock:** {now_pkt.strftime('%I:%M:%S %p')} (PKT) | **Refresh Cycle:** Every 30 Mins | **Email Alerts:** ON")
-
-    def get_session_status(now, open_h, close_h):
-        open_time = now.replace(hour=open_h, minute=0, second=0, microsecond=0)
-        close_time = now.replace(hour=close_h, minute=0, second=0, microsecond=0)
-        is_weekend = now.weekday() >= 5
-        if open_h > close_h:
-            if now.hour >= open_h or now.hour < close_h:
-                is_active = True
-                if now.hour >= open_h: close_time += timedelta(days=1)
-            else: is_active = False
-        else:
-            is_active = open_h <= now.hour < close_h
-            if not is_active and now.hour >= close_h: open_time += timedelta(days=1)
-        if is_weekend: return False, "Market Closed", "⏸️ Weekend"
-        diff = (close_time - now) if is_active else (open_time - now)
-        rem = f"⏳ {'Closes' if is_active else 'Opens'} in {diff.seconds // 3600}h {(diff.seconds // 60) % 60}m"
-        return is_active, f"{open_time.strftime('%I %p')} - {close_time.strftime('%I %p')}", rem
-
-    def get_session_html(name, is_active, color, timing_str, rem_str):
-        bg_color = color if is_active else "#2b3040"
-        return f"""<div class='session-box' style='background-color: {bg_color}; color: white;'>
-            <div style='font-size: 1.1em; font-weight: bold;'>{name}</div>
-            <div style='font-size: 0.85em; opacity: 0.9;'>{timing_str}</div>
-            <div style='font-size: 0.9em; font-weight: 500; margin-top:5px;'>{"🟢 ACTIVE" if is_active else "⚪ CLOSED"}</div>
-            <div class='time-badge'>{rem_str}</div></div>"""
-
-    syd_a, syd_t, syd_r = get_session_status(now_pkt, 3, 12)
-    tok_a, tok_t, tok_r = get_session_status(now_pkt, 5, 14)
-    lon_a, lon_t, lon_r = get_session_status(now_pkt, 12, 21)
-    ny_a, ny_t, ny_r = get_session_status(now_pkt, 17, 2)
-
-    c1, c2, c3, c4 = st.columns(4)
-    with c1: st.markdown(get_session_html("🇦🇺 Sydney", syd_a, "#3498db", syd_t, syd_r), unsafe_allow_html=True)
-    with c2: st.markdown(get_session_html("🇯🇵 Tokyo", tok_a, "#9b59b6", tok_t, tok_r), unsafe_allow_html=True)
-    with c3: st.markdown(get_session_html("🇬🇧 London", lon_a, "#e67e22", lon_t, lon_r), unsafe_allow_html=True)
-    with c4: st.markdown(get_session_html("🇺🇸 New York", ny_a, "#e74c3c", ny_t, ny_r), unsafe_allow_html=True)
+    if api_key:
+        try:
+            genai.configure(api_key=api_key)
+            available_models = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
+            best_model = available_models[0]
+            ai_model = genai.GenerativeModel(best_model)
+        except Exception as e:
+            print(f"AI Initialization Error: {e}")
 
     # Load Data
+    trading_mode = "Swing Trading (D1 + H4)"
     cot_df = load_cot_data()
     oi_df = load_daily_oi()
     df_fx = get_market_data(trading_mode)
-    matrix_df = get_currency_matrix()
     live_news = get_live_squawk()
-
-    st.markdown("---")
-    st.subheader("🎯 AI-Verified Trade Setups (Updated Every 30 Mins)")
 
     strong = df_fx[df_fx['Score'] >= 6]
     weak = df_fx[df_fx['Score'] <= 4]
-    found = False
+    found_setup = False
 
     if not strong.empty and not weak.empty:
         for _, s in strong.iterrows():
             for _, w in weak.iterrows():
                 c1, c2 = s['Instrument'], w['Instrument']
-                cot_align = True
-                if not cot_df.empty:
-                    s_sent = cot_df[cot_df['Instrument'].str.contains(c1, case=False)]['Direction'].values
-                    if len(s_sent) > 0 and "Bearish" in s_sent[0]: cot_align = False
-                oi_align = True
-                if not oi_df.empty and 'Status' in oi_df.columns:
-                    s_oi = oi_df[oi_df['Instrument'] == c1]['Status'].values
-                    if len(s_oi) > 0 and "Decreasing" in s_oi[0]: oi_align = False
                 
-                if cot_align and oi_align and ("✅" in s['Volume Confirm'] or "✅" in w['Volume Confirm']):
+                # NAYI LOGIC: Sirf Technicals (Price Action + Volume) ko as a filter use karo
+                if ("✅" in s['Volume Confirm'] or "✅" in w['Volume Confirm']):
+                    
+                    # COT aur OI ka data uthao AI ko dene ke liye
+                    c1_cot, c1_oi = "Neutral", "Neutral"
+                    if not cot_df.empty:
+                        s_sent = cot_df[cot_df['Instrument'].str.contains(c1, case=False)]['Direction'].values
+                        if len(s_sent) > 0: c1_cot = s_sent[0]
+                    if not oi_df.empty and 'Status' in oi_df.columns:
+                        s_oi_status = oi_df[oi_df['Instrument'] == c1]['Status'].values
+                        if len(s_oi_status) > 0: c1_oi = s_oi_status[0]
+
                     order = ['GOLD', 'EUR', 'GBP', 'AUD', 'NZD', 'USD', 'CAD', 'CHF', 'JPY']
                     try:
                         if order.index(c1) < order.index(c2): pair, action = f"{c1}{c2}", "BUY"
                         else: pair, action = f"{c2}{c1}", "SELL"
                         
-                        setup_id = f"{action}_{pair}_{now_pkt.strftime('%Y-%m-%d_%H')}"
+                        print(f"🔥 Technical Setup Detected: {action} {pair}")
                         
-                        if setup_id not in st.session_state.ai_verdicts:
-                            if ai_model:
-                                with st.spinner(f"🤖 AI Verifying {pair}..."):
-                                    news_str = "\n".join([n['title'] for n in live_news]) if live_news else "No major news"
-                                    prompt = f"Expert Analyst: {action} setup on {pair}. Strength {s['Score']} vs {w['Score']}. COT/Vol/OI Aligned. Live News: {news_str}. Batao yeh trade safe hai ya news risk? (Roman Urdu, 2 lines max)"
-                                    response = ai_model.generate_content(prompt)
-                                    st.session_state.ai_verdicts[setup_id] = response.text
-                            else:
-                                st.session_state.ai_verdicts[setup_id] = "⚠️ AI verification offline."
+                        # AI Verification & Scoring (1 to 10)
+                        verdict = "⚠️ AI verification offline."
+                        if ai_model:
+                            print("🤖 AI Scoring the Setup...")
+                            news_str = "\n".join([n['title'] for n in live_news]) if live_news else "No major news"
+                            
+                            prompt = f"""
+                            Expert Quant Analyst:
+                            Setup: {action} {pair}
+                            Technicals: Strong {c1} (Score: {s['Score']}) vs Weak {c2} (Score: {w['Score']}). Volume is Confirmed.
+                            Institutional Data: {c1} COT Direction is '{c1_cot}'. {c1} Daily OI is '{c1_oi}'.
+                            Live News: {news_str}
+                            
+                            Task: Evaluate how well the Institutional Data & News align with the Technical Setup.
+                            1. Give an alignment score out of 10 (e.g., Score: 8/10).
+                            2. Give a 2-line reasoning in Roman Urdu.
+                            """
+                            response = ai_model.generate_content(prompt)
+                            verdict = response.text
                         
-                        verdict = st.session_state.ai_verdicts.get(setup_id, "Monitoring...")
-                        setup_msg = f"🔥 **{action} {pair}** | Strength: {s['Score']} vs {w['Score']} | Smart Money Aligned"
+                        # Time formatting
+                        pkt_timezone = timezone(timedelta(hours=5))
+                        now_pkt = datetime.now(pkt_timezone)
                         
-                        st.markdown(f"<div style='background-color: #1e222d; padding: 15px; border-radius: 10px; border-left: 5px solid #2ecc71; margin-bottom: 10px;'><h4>{setup_msg}</h4><p style='color: #f1c40f;'><b>🤖 AI:</b> {verdict}</p></div>", unsafe_allow_html=True)
-                        found = True
+                        # Send Email
+                        email_subject = f"🔔 AI Alert [{pair}]: Tech Verified"
+                        email_body = f"Hussain Algo Terminal (24/7 Watchdog)\n\nSetup: {action} {pair}\nStrength: {s['Score']} vs {w['Score']}\nVolume: Confirmed ✅\n\n🤖 AI Alignment Score & Verdict:\n{verdict}\n\nTime: {now_pkt.strftime('%I:%M %p')} (PKT)\nMode: {trading_mode}"
                         
-                        # EMAIL ALERT TRIGGER
-                        if setup_id not in st.session_state.sent_alerts:
-                            email_subject = f"🚨 AI Setup Alert: {action} {pair}"
-                            email_body = f"Hussain Algo Terminal Alert\n\nSetup: {action} {pair}\nStrength: {s['Score']} vs {w['Score']}\n\n🤖 AI Verdict:\n{verdict}\n\nTime: {now_pkt.strftime('%I:%M %p')}\nMode: {trading_mode}"
-                            send_email_alert(email_subject, email_body)
-                            st.session_state.sent_alerts.add(setup_id)
-                    except: pass
-    
-    if not found: st.info("Filhal koi setup nahi mila. Background monitoring active hai...")
+                        send_email_alert(email_subject, email_body)
+                        found_setup = True
+                    except Exception as e:
+                        print(f"Error processing {c1}{c2}: {e}")
 
-    # --- AI CO-PILOT CHAT ---
-    st.markdown("---")
-    st.subheader("💬 Gemini AI Chat (Manual Queries)")
-    if api_key:
-        if "chat_session" not in st.session_state or st.session_state.chat_session is None:
-            st.session_state.chat_session = ai_model.start_chat(history=[])
-        if "chat_messages" not in st.session_state: st.session_state.chat_messages = []
-                    
-        if st.session_state.chat_messages:
-            for msg in st.session_state.chat_messages:
-                if msg["role"] == "assistant":
-                    st.markdown(f"<div style='background-color: #1e222d; padding: 20px; border-radius: 10px; border-left: 5px solid #3498db; margin-bottom: 10px;'><b>🤖 AI Co-Pilot:</b><br>{msg['content']}</div>", unsafe_allow_html=True)
-                else:
-                    st.markdown(f"<div style='background-color: #2b3040; padding: 15px; border-radius: 10px; border-left: 5px solid #e74c3c; margin-bottom: 10px; text-align: right;'><b>👤 Aap:</b><br>{msg['content']}</div>", unsafe_allow_html=True)
-            
-        user_q = st.chat_input("Agar market ke bare mein confusion hai toh AI se puchein...")
-        if user_q:
-            st.session_state.chat_messages.append({"role": "user", "content": user_q})
-            with st.spinner("AI Soch raha hai..."):
-                try:
-                    res = st.session_state.chat_session.send_message(f"Forex expert ki hasiyat se Roman Urdu mein jawab dein: {user_q}")
-                    st.session_state.chat_messages.append({"role": "assistant", "content": res.text})
-                    st.rerun()
-                except Exception as e: st.error(f"Error: {e}")
-    else:
-        st.error("API Key missing. Chat disabled.")
+    if not found_setup:
+        print("💤 No technical setups found with volume confirmation right now. Sleeping till next cycle.")
 
-    # --- MATRIX ---
-    st.markdown("---")
-    st.subheader("🧮 Weekly Currency Strength Matrix")
-    def style_matrix(val):
-        if val == '⬆': return 'color: #2ecc71; font-weight: bold; text-align: center; font-size: 22px;'
-        if val == '⬇': return 'color: #e74c3c; font-weight: bold; text-align: center; font-size: 22px;'
-        if val == '↔': return 'color: #f39c12; font-weight: bold; text-align: center; font-size: 22px;'
-        if val == '': return 'background-color: #1e222d;' 
-        if isinstance(val, (int, float)):
-            if val > 0: return 'background-color: rgba(46, 204, 113, 0.2); color: #2ecc71; font-weight: bold; text-align: center; font-size: 18px;'
-            if val < 0: return 'background-color: rgba(231, 76, 60, 0.2); color: #e74c3c; font-weight: bold; text-align: center; font-size: 18px;'
-            return 'color: gray; font-weight: bold; text-align: center; font-size: 18px;'
-        return ''
-
-    if not matrix_df.empty:
-        st.dataframe(matrix_df.style.map(style_matrix), use_container_width=True)
-    else: st.write("Calculating Weekly Matrix from 28 cross pairs...")
-
-    # --- BOTTOM TABLES ---
-    st.markdown("---")
-    col_l, col_r = st.columns(2)
-    with col_l:
-        st.subheader("🔍 Price Action Analysis")
-        def style_score(val):
-            if val >= 6: return 'background-color: rgba(46, 204, 113, 0.2); color: #2ecc71; font-weight: bold'
-            elif val <= 4: return 'background-color: rgba(231, 76, 60, 0.2); color: #e74c3c; font-weight: bold'
-            return ''
-        def style_structure(val):
-            if 'Uptrend' in str(val) or 'Buy' in str(val) or '✅' in str(val): return 'color: #2ecc71; font-weight: bold'
-            if 'Downtrend' in str(val) or 'Sell' in str(val) or '❌' in str(val) or '🚨' in str(val): return 'color: #e74c3c; font-weight: bold'
-            return ''
-        if not df_fx.empty:
-            styled_df = df_fx.style.map(style_score, subset=['Score']).map(style_structure, subset=['Structure', 'PA Signal', 'Volume Confirm'])
-            st.dataframe(styled_df, use_container_width=True, hide_index=True)
-        else: st.write("Fetching technicals...")
-
-    with col_r:
-        st.subheader("📊 Smart Money (COT & Daily OI)")
-        st.markdown("**1. Weekly COT Sentiment:**")
-        def style_cot(val):
-            try:
-                if float(val) > 0: return 'background-color: rgba(46, 204, 113, 0.1); color: #2ecc71; font-weight: bold'
-                elif float(val) < 0: return 'background-color: rgba(231, 76, 60, 0.1); color: #e74c3c; font-weight: bold'
-            except: pass
-            return ''
-        if not cot_df.empty:
-            styled_cot = cot_df.head(10).style.map(style_cot, subset=['Net Change'])
-            st.dataframe(styled_cot, use_container_width=True, hide_index=True)
-            
-        st.markdown("**2. Daily Futures Open Interest:**")
-        def style_oi(val):
-            if 'Increasing' in str(val): return 'background-color: rgba(46, 204, 113, 0.1); color: #2ecc71; font-weight: bold'
-            if 'Decreasing' in str(val): return 'background-color: rgba(231, 76, 60, 0.1); color: #e74c3c; font-weight: bold'
-            return ''
-        if not oi_df.empty and 'Status' in oi_df.columns:
-            styled_oi = oi_df.style.map(style_oi, subset=['Status'])
-            st.dataframe(styled_oi, use_container_width=True, hide_index=True)
-        else: st.write("Daily_OI.xlsm not found or loading...")
-
-    # --- NEWS & CALENDAR ---
-    st.markdown("---")
-    st.subheader("📰 Live Breaking News (Forex Squawk)")
-    if live_news:
-        for n in live_news: st.markdown(f"<div class='news-card'><b>⚡ {n['title']}</b><br><small>{n['time']}</small></div>", unsafe_allow_html=True)
-    else: st.warning("Squawk feed currently unavailable.")
-
-    st.markdown("---")
-    st.subheader("📅 High Impact & Bank Holidays Calendar")
-    try:
-        cal_data = requests.get("https://nfs.faireconomy.media/ff_calendar_thisweek.json").json()
-        news_by_date = {}
-        for e in cal_data:
-            if e.get('impact') in ['High', 'Holiday']:
-                dt = datetime.fromisoformat(e['date']).astimezone(pkt_timezone)
-                d_str = dt.strftime("%A, %d %b %Y")
-                if d_str not in news_by_date: news_by_date[d_str] = []
-                news_by_date[d_str].append({
-                    'time': 'All Day' if e.get('impact') == 'Holiday' else dt.strftime('%I:%M %p'), 
-                    'curr': e['country'], 
-                    'title': e['title'], 
-                    'past': dt < now_pkt,
-                    'impact': e.get('impact')
-                })
-        for day, events in news_by_date.items():
-            with st.expander(f"📅 {day}", expanded=True):
-                for ev in events:
-                    c1, c2, c3 = st.columns([1, 1, 3])
-                    icon = "🔴" if ev['impact'] == 'High' else "⚫"
-                    if ev['past']:
-                        c1.markdown(f"~~{ev['time']}~~")
-                        c2.markdown(f"~~{ev['curr']}~~")
-                        c3.markdown(f"⚪ *{ev['title']} (Passed)*")
-                    else:
-                        c1.markdown(f"**{ev['time']}**")
-                        c2.markdown(f"**{ev['curr']}**")
-                        c3.markdown(f"{icon} **{ev['title']}**")
-    except: st.write("Calendar loading...")
-
-# =========================================================================
-# --- TAB 2 & 3: Risk Manager & Psychology ---
-# =========================================================================
-with tab_risk:
-    st.header("💰 Money Management & Lot Size Calculator")
-    col_acc, col_calc = st.columns([2, 1])
-    with col_acc:
-        st.subheader("📊 Multi-Account Tracker")
-        acc_data = []
-        for i in range(1, 6):
-            c1, c2, c3 = st.columns([2, 2, 2])
-            name = c1.text_input(f"Account {i} Name", f"Prop Firm {i}", key=f"acc_name_{i}")
-            bal = c2.number_input(f"Start Balance ($)", value=50000.0, step=100.0, key=f"acc_bal_{i}")
-            risk_p = c3.slider(f"Risk %", 0.1, 5.0, 0.5, key=f"acc_risk_{i}")
-            acc_data.append({"Name": name, "Balance": bal, "Risk %": risk_p, "Risk Amount": (bal * risk_p / 100)})
-        st.table(pd.DataFrame(acc_data))
-
-    with col_calc:
-        st.subheader("🧮 Lot Size Calculator")
-        selected_acc = st.selectbox("Select Account", [a["Name"] for a in acc_data])
-        sl_pips = st.number_input("Stop Loss (Pips)", min_value=1.0, value=20.0)
-        target_acc = next(item for item in acc_data if item["Name"] == selected_acc)
-        risk_usd = target_acc["Risk Amount"]
-        calculated_lots = risk_usd / (sl_pips * 10)
-        st.markdown(f"<div style='background-color: #1e222d; padding: 20px; border-radius: 10px; border-left: 5px solid #2ecc71;'><h4 style='margin:0;'>Suggested Lot Size:</h4><h1 style='color: #2ecc71; margin:0;'>{calculated_lots:.2f}</h1><small>Risking: ${risk_usd:.2f} on this trade</small></div>", unsafe_allow_html=True)
-
-with tab_psych:
-    st.header("🧠 Trading Psychology & Discipline")
-    quotes = ["Trading is not about being right, it's about being disciplined.", "A loss is just a cost of doing business. Don't take it personally.", "The market doesn't care about your feelings. Stick to the plan.", "Institutional traders don't gamble; they manage risk. Be like them.", "Your edge lies in your patience, not in how many trades you take.", "Stop looking for 'sure things' and start looking for 'high probabilities'."]
-    st.markdown(f"<div class='psych-box'><p style='margin:0; font-weight: bold; color: #aaa;'>Quote of the Day:</p><p class='quote-text'>\"{random.choice(quotes)}\"</p></div>", unsafe_allow_html=True)
-    col_pre, col_post = st.columns(2)
-    with col_pre:
-        st.subheader("✅ Pre-Trade Checklist")
-        st.checkbox("Kya PA + VSA + COT + OI charon align hain?")
-        st.checkbox("Kya yeh revenge trade toh nahi?")
-        st.checkbox("Kya lot size calculator se confirm kar li hai?")
-        st.checkbox("Kya main market ke mood ko samajh chuka hoon?")
-        st.checkbox("Kya Stop Loss aur Take Profit set hai?")
-    with col_post:
-        st.subheader("📝 Post-Trade Journal")
-        st.checkbox("Kya main ne apna plan follow kiya?")
-        st.checkbox("Kya emotions (Fear/Greed) ne tang kiya?")
-        st.text_area("Lesson learned from this trade:")
-        if st.button("Save Entry"): st.success("Entry saved for your personal growth!")
-    st.markdown("---")
-    st.info("💡 **Hussain Bhai**, yaad rakhein: Analysis aap ko entry deta hai, lekin Psychology aap ko profitable rakhti hai.")
+if __name__ == "__main__":
+    run_bot()
