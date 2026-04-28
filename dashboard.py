@@ -7,6 +7,15 @@ from datetime import datetime, timezone, timedelta
 # --- PAGE CONFIG ---
 st.set_page_config(page_title="Hussain Algo Terminal", page_icon="📈", layout="wide")
 
+# --- INITIALIZE AI ---
+try:
+    api_key = st.secrets["GEMINI_API_KEY"]
+    genai.configure(api_key=api_key)
+    available_models = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
+    ai_model = genai.GenerativeModel(available_models[0])
+except Exception as e:
+    ai_model = None
+
 # --- DATA FUNCTIONS ---
 @st.cache_data(ttl=3600)
 def load_cot_data():
@@ -52,16 +61,6 @@ def get_market_data(mode):
         except: pass
     return pd.DataFrame(data_list)
 
-# --- INITIALIZE AI ---
-try:
-    api_key = st.secrets["GEMINI_API_KEY"]
-    genai.configure(api_key=api_key)
-    available_models = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
-    ai_model = genai.GenerativeModel(available_models[0])
-except Exception as e:
-    st.error(f"AI Error: {e}")
-    ai_model = None
-
 # --- UI TABS ---
 tab_terminal, tab_risk, tab_psych = st.tabs(["📈 Trading Terminal", "💰 Risk Manager", "🧠 Mindset & Psychology"])
 
@@ -69,19 +68,56 @@ with tab_terminal:
     st.title("📈 Master Trading AI Verified Terminal")
     trading_mode = st.radio("⚙️ Select Trading Engine", ["Intraday (H1 + M30)", "Swing Trading (D1 + H4)"], index=1, horizontal=True)
     
+    # 1. MARKET TECHNICALS
     st.subheader("📊 Market Technicals & Volume")
     df_fx = get_market_data(trading_mode)
     st.dataframe(df_fx, use_container_width=True)
     
+    # 2. INSTITUTIONAL DATA (COT & OI)
+    st.subheader("🏦 Institutional Data (COT & Daily OI)")
+    col1, col2 = st.columns(2)
+    with col1:
+        st.write("**Smart Money COT Data**")
+        cot_df = load_cot_data()
+        if not cot_df.empty: st.dataframe(cot_df, use_container_width=True)
+        else: st.warning("COT Data file read nahi ho saki.")
+        
+    with col2:
+        st.write("**Daily Open Interest (OI)**")
+        oi_df = load_daily_oi()
+        if not oi_df.empty: st.dataframe(oi_df, use_container_width=True)
+        else: st.warning("Daily OI file read nahi ho saki.")
+
+    # 3. ACTIVE SETUPS
+    st.subheader("🔥 Active Setups (Volume Confirmed)")
+    strong = df_fx[df_fx['Score'] >= 6]
+    weak = df_fx[df_fx['Score'] <= 4]
+    found_setup = False
+    
+    if not strong.empty and not weak.empty:
+        for _, s in strong.iterrows():
+            for _, w in weak.iterrows():
+                if "✅" in s['Volume Confirm'] or "✅" in w['Volume Confirm']:
+                    st.success(f"**Setup Detected:** Strong {s['Instrument']} vs Weak {w['Instrument']} | Volume Confirmed ✅")
+                    found_setup = True
+    
+    if not found_setup:
+        st.info("💤 No active setups matching volume confirmation criteria right now.")
+
+    # 4. AI CHAT
+    st.divider()
     st.subheader("💬 Gemini AI Chat (Manual Queries)")
     user_query = st.text_input("Agar market ke bare mein confusion hai toh AI se puchein...")
-    if user_query and ai_model:
-        st.info(ai_model.generate_content(user_query).text)
+    if user_query:
+        if ai_model:
+            st.info(ai_model.generate_content(user_query).text)
+        else:
+            st.error("⚠️ AI is currently offline. API Key check karein.")
 
 with tab_risk:
     st.title("💰 Risk Manager")
-    st.write("Lot size calculator will be here.")
+    st.write("Money management tools and lot size calculator will appear here.")
 
 with tab_psych:
     st.title("🧠 Mindset & Psychology")
-    st.write("Discipline is the key to success.")
+    st.write("Discipline, patience, and consistency make a profitable trader.")
