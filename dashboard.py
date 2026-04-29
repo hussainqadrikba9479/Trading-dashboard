@@ -7,9 +7,10 @@ import requests
 import xml.etree.ElementTree as ET
 from datetime import datetime, timedelta
 import pytz
+from email.utils import parsedate_to_datetime # RSS time parse karne ke liye
 
 # --- 1. CONFIGURATION & PAGE SETUP ---
-st.set_page_config(page_title="Hussain Algo Terminal V7", page_icon="📈", layout="wide")
+st.set_page_config(page_title="Hussain Algo Terminal V8", page_icon="📈", layout="wide")
 
 try:
     api_key = st.secrets["GEMINI_API_KEY"]
@@ -60,7 +61,7 @@ def get_news_and_squawk():
     now_pkt = datetime.now(pkt_tz)
     est_tz = pytz.timezone('US/Eastern')
     
-    # 1. Scheduled News (Forex Factory) - Past Days Removed
+    # 1. Scheduled News (Forex Factory)
     news = []
     try:
         r = requests.get("https://nfs.faireconomy.media/ff_calendar_thisweek.xml", timeout=10)
@@ -81,10 +82,9 @@ def get_news_and_squawk():
                 display_time = time_str
                 
                 try:
-                    # DATE FILTER LOGIC: Pichle dinon ki news nikal dena
                     dt_date = datetime.strptime(date_str, "%m-%d-%Y").date()
                     if dt_date < now_pkt.date():
-                        continue  # Skip kar dein (Minus kar dein)
+                        continue 
                     
                     if time_str.lower() not in ['all day', 'tentative']:
                         dt_str = f"{date_str} {time_str}"
@@ -93,7 +93,6 @@ def get_news_and_squawk():
                         dt_pkt = dt_est.astimezone(pkt_tz)
                         display_time = dt_pkt.strftime("%I:%M %p")
                         
-                        # Agar time guzar gaya hai (Current Day Strike-through logic)
                         if now_pkt > dt_pkt:
                             is_past = True
                 except: pass
@@ -112,18 +111,19 @@ def get_news_and_squawk():
     except: pass
     df_news = pd.DataFrame(news)
     
-    # 2. Live Squawk (Investing.com RSS)
+    # 2. Live Squawk (ForexLive Feed - Reliable & Unblocked)
     squawk = []
     try:
-        r2 = requests.get("https://www.investing.com/rss/news_252.rss", headers={'User-Agent': 'Mozilla/5.0'}, timeout=10)
+        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'}
+        r2 = requests.get("https://www.forexlive.com/feed/news", headers=headers, timeout=10)
         root2 = ET.fromstring(r2.content)
         for i, item in enumerate(root2.findall('.//item')):
-            if i >= 6: break
+            if i >= 7: break
             pub_date = item.find('pubDate').text
             try:
-                dt_gmt = datetime.strptime(pub_date, "%a, %d %b %Y %H:%M:%S %Z")
-                dt_gmt = pytz.timezone('GMT').localize(dt_gmt)
-                dt_pkt_sq = dt_gmt.astimezone(pkt_tz)
+                # Robust Time Parsing
+                dt_obj = parsedate_to_datetime(pub_date)
+                dt_pkt_sq = dt_obj.astimezone(pkt_tz)
                 time_display = dt_pkt_sq.strftime("%I:%M %p")
             except:
                 time_display = pub_date[:22]
@@ -132,7 +132,9 @@ def get_news_and_squawk():
                 'Time': time_display, 
                 'Headline': item.find('title').text
             })
-    except: pass
+    except Exception as e:
+        print(f"Squawk Error: {e}")
+        pass
     
     return df_news, squawk
 
@@ -146,7 +148,7 @@ def get_matrix_data():
         for j, c2 in enumerate(currencies):
             if i == j: matrix.iloc[i, j] = "-"
             else:
-                val = np.random.choice([1, -1, 0]) # Placeholder logic
+                val = np.random.choice([1, -1, 0]) 
                 if val == 1: 
                     matrix.iloc[i, j] = "🟢 ⬆"
                     score += 1
@@ -193,22 +195,22 @@ def show_sessions():
         is_active = open_mins <= current_time_minutes < close_mins
         
         if is_active:
-            bg_style = "background: linear-gradient(135deg, #00C853, #1B5E20); border: 2px solid #69F0AE; box-shadow: 0 0 15px rgba(0, 200, 83, 0.4);"
+            # New Lucrative, Premium Dark-Green Glowing Style
+            bg_style = "background: linear-gradient(145deg, #0a2113, #113a22); border: 1px solid #00ff88; box-shadow: 0 0 12px rgba(0, 255, 136, 0.3);"
             remaining = close_mins - current_time_minutes
-            text = f"🟢 <b>ACTIVE</b><br><small style='color:#E0F2F1;'>Closes in {remaining//60}h {remaining%60}m</small>"
+            text = f"<span style='color:#00ff88; font-weight:bold; letter-spacing: 1px;'>🟢 ACTIVE</span><br><small style='color:#b3b3b3;'>Closes in {remaining//60}h {remaining%60}m</small>"
         else:
-            bg_style = "background-color: #2b2b2b; border: 1px solid #444;"
+            bg_style = "background-color: #1e1e1e; border: 1px solid #333;"
             wait = open_mins - current_time_minutes if current_time_minutes < open_mins else (open_mins + 24*60) - current_time_minutes
-            text = f"<span style='color:#888;'>Closed</span><br><small style='color:#777;'>Opens in {wait//60}h {wait%60}m</small>"
+            text = f"<span style='color:#666;'>Closed</span><br><small style='color:#555;'>Opens in {wait//60}h {wait%60}m</small>"
             
-        cols[i].markdown(f"<div style='padding:15px; border-radius:10px; {bg_style} text-align:center;'><h4 style='margin-bottom:5px; color:white;'>{s['name']}</h4><p style='margin:0;'>{text}</p></div>", unsafe_allow_html=True)
+        cols[i].markdown(f"<div style='padding:15px; border-radius:10px; {bg_style} text-align:center;'><h4 style='margin-bottom:5px; color:#e0e0e0;'>{s['name']}</h4><p style='margin:0;'>{text}</p></div>", unsafe_allow_html=True)
 
 # --- 4. MAIN DASHBOARD ---
 
 show_sessions()
 st.divider()
 
-# Layout Update: Left column made wider (ratio 2.5 : 1) for better reading
 col_left, col_right = st.columns([2.5, 1])
 
 with col_left:
@@ -221,16 +223,14 @@ with col_left:
     
     st.divider()
     
-    # News Shifted to Left Column for maximum space
     st.subheader("📅 Scheduled News (Forex Factory)")
     df_news, squawk_list = get_news_and_squawk()
     
     if not df_news.empty:
         html_table = "<table style='width:100%; text-align:left; font-size:14px; border-collapse: collapse;'>"
-        html_table += "<tr style='border-bottom: 2px solid #555; color:#ccc; background-color: #222;'><th>Date</th><th>Time(PKT)</th><th>Imp</th><th>Cur</th><th>Event</th><th>Actual</th><th>Forecast</th><th>Prev</th></tr>"
+        html_table += "<tr style='border-bottom: 2px solid #555; color:#ccc; background-color: #1e1e1e;'><th>Date</th><th>Time(PKT)</th><th>Imp</th><th>Cur</th><th>Event</th><th>Actual</th><th>Forecast</th><th>Prev</th></tr>"
         
         for idx, row in df_news.iterrows():
-            # Real-time Strike-through for Current Day Past News
             row_style = "text-decoration: line-through; color: #666;" if row['_is_past'] else "color: #fff;"
             html_table += f"<tr style='border-bottom: 1px solid #333; {row_style}'>"
             html_table += f"<td style='padding:8px;'>{row['Date']}</td><td>{row['Time (PKT)']}</td><td>{row['Impact']}</td><td><b>{row['Cur']}</b></td><td>{row['Event']}</td>"
@@ -250,13 +250,14 @@ with col_right:
     
     st.divider()
     
-    # Live Squawk on Right Column
     st.subheader("⚡ Live Breaking News")
     if squawk_list:
         for item in squawk_list:
             st.markdown(f"<h5 style='margin-bottom:0px; color:#4DA8DA; font-size:15px;'>{item['Headline']}</h5>", unsafe_allow_html=True)
-            st.markdown(f"<small style='color:#888;'>Investing.com • {item['Time']}</small>", unsafe_allow_html=True)
+            st.markdown(f"<small style='color:#888;'>ForexLive • {item['Time']}</small>", unsafe_allow_html=True)
             st.markdown("<hr style='margin-top:5px; margin-bottom:12px; border-color:#333;'>", unsafe_allow_html=True)
+    else:
+        st.warning("📡 Live feed abhi available nahi hai. System dobara koshish kar raha hai...")
 
 st.divider()
 st.subheader("💬 Market Q&A (Ask Gemini)")
