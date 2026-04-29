@@ -9,7 +9,7 @@ from datetime import datetime, timedelta
 import pytz
 
 # --- 1. CONFIGURATION & PAGE SETUP ---
-st.set_page_config(page_title="Hussain Algo Terminal V6", page_icon="📈", layout="wide")
+st.set_page_config(page_title="Hussain Algo Terminal V7", page_icon="📈", layout="wide")
 
 try:
     api_key = st.secrets["GEMINI_API_KEY"]
@@ -60,7 +60,7 @@ def get_news_and_squawk():
     now_pkt = datetime.now(pkt_tz)
     est_tz = pytz.timezone('US/Eastern')
     
-    # 1. Scheduled News (Forex Factory) - Timezone Sync
+    # 1. Scheduled News (Forex Factory) - Past Days Removed
     news = []
     try:
         r = requests.get("https://nfs.faireconomy.media/ff_calendar_thisweek.xml", timeout=10)
@@ -80,19 +80,21 @@ def get_news_and_squawk():
                 is_past = False
                 display_time = time_str
                 
-                # EST se PKT Time conversion aur Past News Check
                 try:
+                    # DATE FILTER LOGIC: Pichle dinon ki news nikal dena
+                    dt_date = datetime.strptime(date_str, "%m-%d-%Y").date()
+                    if dt_date < now_pkt.date():
+                        continue  # Skip kar dein (Minus kar dein)
+                    
                     if time_str.lower() not in ['all day', 'tentative']:
                         dt_str = f"{date_str} {time_str}"
                         dt_est = datetime.strptime(dt_str, "%m-%d-%Y %I:%M%p")
                         dt_est = est_tz.localize(dt_est)
                         dt_pkt = dt_est.astimezone(pkt_tz)
                         display_time = dt_pkt.strftime("%I:%M %p")
+                        
+                        # Agar time guzar gaya hai (Current Day Strike-through logic)
                         if now_pkt > dt_pkt:
-                            is_past = True
-                    else:
-                        dt_date = datetime.strptime(date_str, "%m-%d-%Y").date()
-                        if now_pkt.date() > dt_date:
                             is_past = True
                 except: pass
                 
@@ -191,7 +193,6 @@ def show_sessions():
         is_active = open_mins <= current_time_minutes < close_mins
         
         if is_active:
-            # Lucrative Neon Green color for active session
             bg_style = "background: linear-gradient(135deg, #00C853, #1B5E20); border: 2px solid #69F0AE; box-shadow: 0 0 15px rgba(0, 200, 83, 0.4);"
             remaining = close_mins - current_time_minutes
             text = f"🟢 <b>ACTIVE</b><br><small style='color:#E0F2F1;'>Closes in {remaining//60}h {remaining%60}m</small>"
@@ -207,7 +208,8 @@ def show_sessions():
 show_sessions()
 st.divider()
 
-col_left, col_right = st.columns([2, 1])
+# Layout Update: Left column made wider (ratio 2.5 : 1) for better reading
+col_left, col_right = st.columns([2.5, 1])
 
 with col_left:
     st.subheader("🔥 Active Trade Setups & AI Scoring")
@@ -216,6 +218,28 @@ with col_left:
     
     st.subheader("📊 Currency Strength Matrix")
     st.dataframe(get_matrix_data().style.map(style_matrix), use_container_width=True)
+    
+    st.divider()
+    
+    # News Shifted to Left Column for maximum space
+    st.subheader("📅 Scheduled News (Forex Factory)")
+    df_news, squawk_list = get_news_and_squawk()
+    
+    if not df_news.empty:
+        html_table = "<table style='width:100%; text-align:left; font-size:14px; border-collapse: collapse;'>"
+        html_table += "<tr style='border-bottom: 2px solid #555; color:#ccc; background-color: #222;'><th>Date</th><th>Time(PKT)</th><th>Imp</th><th>Cur</th><th>Event</th><th>Actual</th><th>Forecast</th><th>Prev</th></tr>"
+        
+        for idx, row in df_news.iterrows():
+            # Real-time Strike-through for Current Day Past News
+            row_style = "text-decoration: line-through; color: #666;" if row['_is_past'] else "color: #fff;"
+            html_table += f"<tr style='border-bottom: 1px solid #333; {row_style}'>"
+            html_table += f"<td style='padding:8px;'>{row['Date']}</td><td>{row['Time (PKT)']}</td><td>{row['Impact']}</td><td><b>{row['Cur']}</b></td><td>{row['Event']}</td>"
+            html_table += f"<td><b>{row['Actual']}</b></td><td>{row['Forecast']}</td><td>{row['Previous']}</td>"
+            html_table += "</tr>"
+        html_table += "</table>"
+        st.markdown(html_table, unsafe_allow_html=True)
+    else:
+        st.info("💤 Is hafte ke liye koi aur major news baqi nahi hai.")
 
 with col_right:
     st.subheader("🏦 Institutional (COT/OI)")
@@ -226,26 +250,8 @@ with col_right:
     
     st.divider()
     
-    st.subheader("📅 Scheduled News (Forex Factory)")
-    df_news, squawk_list = get_news_and_squawk()
-    
-    if not df_news.empty:
-        html_table = "<table style='width:100%; text-align:left; font-size:13px; border-collapse: collapse;'>"
-        html_table += "<tr style='border-bottom: 2px solid #555; color:#ccc;'><th>Date</th><th>Time(PKT)</th><th>Imp</th><th>Cur</th><th>Event</th><th>Actual</th><th>Forecast</th><th>Prev</th></tr>"
-        
-        for idx, row in df_news.iterrows():
-            # Real-time Strike-through logic applied here
-            row_style = "text-decoration: line-through; color: #666;" if row['_is_past'] else "color: #fff;"
-            html_table += f"<tr style='border-bottom: 1px solid #333; {row_style}'>"
-            html_table += f"<td>{row['Date']}</td><td>{row['Time (PKT)']}</td><td>{row['Impact']}</td><td><b>{row['Cur']}</b></td><td>{row['Event']}</td>"
-            html_table += f"<td><b>{row['Actual']}</b></td><td>{row['Forecast']}</td><td>{row['Previous']}</td>"
-            html_table += "</tr>"
-        html_table += "</table>"
-        st.markdown(html_table, unsafe_allow_html=True)
-    
-    st.divider()
-    
-    st.subheader("⚡ Live Breaking News (Investing.com)")
+    # Live Squawk on Right Column
+    st.subheader("⚡ Live Breaking News")
     if squawk_list:
         for item in squawk_list:
             st.markdown(f"<h5 style='margin-bottom:0px; color:#4DA8DA; font-size:15px;'>{item['Headline']}</h5>", unsafe_allow_html=True)
