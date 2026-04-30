@@ -14,7 +14,7 @@ st.set_page_config(page_title="Hussain Algo Terminal V14 (2-Phase UI)", page_ico
 try:
     api_key = st.secrets["GEMINI_API_KEY"]
     genai.configure(api_key=api_key)
-    ai_model = genai.GenerativeModel('gemini-1.5-flash') 
+    ai_model = genai.GenerativeModel('gemini-pro')
 except Exception as e:
     ai_model = None
 
