@@ -14,7 +14,21 @@ st.set_page_config(page_title="Hussain Algo Terminal V14 (2-Phase UI)", page_ico
 try:
     api_key = st.secrets["GEMINI_API_KEY"]
     genai.configure(api_key=api_key)
-    ai_model = genai.GenerativeModel('gemini-pro')
+    
+    # AI khud check karega ke Google ki taraf se konsa model allowed hai
+    available_models = []
+    for m in genai.list_models():
+        if 'generateContent' in m.supported_generation_methods:
+            # Model ka naam clean kar ke list mein daal do
+            clean_name = m.name.replace('models/', '')
+            available_models.append(clean_name)
+            
+    if available_models:
+        # Jo bhi pehla available model ho (jaise gemini-1.5-flash ya koi aur), usay auto-select kar lo
+        ai_model = genai.GenerativeModel(available_models[-1]) 
+    else:
+        ai_model = None
+        
 except Exception as e:
     ai_model = None
 
