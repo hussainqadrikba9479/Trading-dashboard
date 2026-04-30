@@ -9,13 +9,13 @@ import pytz
 from email.utils import parsedate_to_datetime
 
 # --- 1. CONFIGURATION & PAGE SETUP ---
-st.set_page_config(page_title="Hussain Algo Terminal V12 (Dual-Leg AI Scan)", page_icon="⚡", layout="wide")
+st.set_page_config(page_title="Hussain Algo Terminal V14 (2-Phase UI)", page_icon="⚡", layout="wide")
 
 try:
     api_key = st.secrets["GEMINI_API_KEY"]
     genai.configure(api_key=api_key)
-    ai_model = genai.GenerativeModel('gemini-1.5-flash')
-except:
+    ai_model = genai.GenerativeModel('gemini-1.5-flash') 
+except Exception as e:
     ai_model = None
 
 # --- 2. DATA ENGINES (COT & NEWS ONLY) ---
@@ -92,19 +92,16 @@ def get_news_and_squawk():
 
 # --- 3. DUAL-LEG VSA & STRUCTURE ENGINE ---
 
-@st.cache_data(ttl=60) # Fast processing, reads major currencies only once
+@st.cache_data(ttl=60)
 def get_all_currency_strengths():
     currencies = ['USD', 'EUR', 'GBP', 'AUD', 'NZD', 'CAD', 'CHF', 'JPY', 'XAU']
     strengths = {}
     
-    # Proxy Tickers for Currencies (Similar to DX, 6E, 6B etc.)
     tickers = {
         'USD': 'DX-Y.NYB', 'EUR': 'EURUSD=X', 'GBP': 'GBPUSD=X',
         'AUD': 'AUDUSD=X', 'NZD': 'NZDUSD=X', 'CAD': 'USDCAD=X',
         'CHF': 'USDCHF=X', 'JPY': 'USDJPY=X', 'XAU': 'GC=F'
     }
-    
-    # CAD, CHF, JPY are quoted against USD, so their chart logic is inverted
     inverted = ['CAD', 'CHF', 'JPY']
     
     for curr in currencies:
@@ -115,12 +112,10 @@ def get_all_currency_strengths():
                 strengths[curr] = "Neutral"
                 continue
                 
-            # 1. Volume Logic
             avg_vol = df['Volume'].rolling(20).mean().iloc[-1]
             curr_vol = df['Volume'].iloc[-1]
             is_high_vol = curr_vol > (avg_vol * 1.5) if avg_vol > 0 else False
             
-            # 2. Structure Logic (BOS)
             last_close = df['Close'].iloc[-1]
             prev_high = df['High'].rolling(20).max().iloc[-2]
             prev_low = df['Low'].rolling(20).min().iloc[-2]
@@ -140,14 +135,12 @@ def get_all_currency_strengths():
     return strengths
 
 def check_pair_alignment(pair, strengths_dict):
-    """ Matches Base vs Quote to find perfectly aligned setups """
     base = 'XAU' if pair == 'XAUUSD' else pair[:3]
     quote = 'USD' if pair == 'XAUUSD' else pair[3:]
     
     base_str = strengths_dict.get(base, "Neutral")
     quote_str = strengths_dict.get(quote, "Neutral")
     
-    # System Level Alignment Check
     if base_str == "Strong" and quote_str == "Weak":
         return {"Pair": pair, "Type": "BUY", "Logic": f"Base ({base}) is Strong + Quote ({quote}) is Weak"}
     elif base_str == "Weak" and quote_str == "Strong":
@@ -155,27 +148,22 @@ def check_pair_alignment(pair, strengths_dict):
     return None
 
 def verify_signal_with_ai(raw_signal, cot_data, news_data):
-    """ AI Fundamental & Institutional Verification """
     if not ai_model or not raw_signal: return None
-    
     base = 'XAU' if raw_signal['Pair'] == 'XAUUSD' else raw_signal['Pair'][:3]
     quote = 'USD' if raw_signal['Pair'] == 'XAUUSD' else raw_signal['Pair'][3:]
     
     prompt = f"""
-    You are an expert Quant Trader. Analyze this dual-leg setup:
+    Analyze this dual-leg setup:
     Pair: {raw_signal['Pair']} ({raw_signal['Type']})
-    System Structural Logic: {raw_signal['Logic']} (Based on VSA & BOS).
-    
-    Now verify it fundamentally:
-    Are there any extreme COT conditions for {base} or {quote}? 
-    Are there any conflicting High Impact news for {base} or {quote} today?
-    
-    Give a short expert verdict and a Confidence Score out of 100%.
+    Logic: {raw_signal['Logic']}.
+    Are there any extreme COT conditions or High Impact news for {base}/{quote} today?
+    Give a short expert verdict and Confidence Score out of 100%.
     """
     try:
         response = ai_model.generate_content(prompt)
         return {"Score": 90, "Reason": response.text[:280]} 
-    except: return None
+    except Exception as e:
+        return {"Score": 0, "Reason": f"Error"} # Simple error tag so it doesn't show in verified section
 
 # --- 4. OUTPUT BLOCKS ---
 
@@ -221,33 +209,62 @@ st.divider()
 col_left, col_right = st.columns([2.5, 1])
 
 with col_left:
-    st.subheader("⚡ Dual-Leg Trade Setups (AI Verified)")
     
     cot_df = load_cot_data() 
     news_df, squawk_list = get_news_and_squawk() 
-    found_any = False
     
-    with st.spinner('Calculating VSA & Structure for Base vs Quote...'):
-        currency_strengths = get_all_currency_strengths() # Single fast scan
-        
+    phase1_setups = []
+    ai_verified_setups = []
+    
+    # ---------------------------------------------
+    # PHASE 1: TECHNICAL SCAN (VSA & STRUCTURE ONLY)
+    # ---------------------------------------------
+    st.subheader("⚙️ Phase 1: Technical Setups (VSA & Structure)")
+    
+    with st.spinner('Scanning Phase 1 (Base vs Quote)...'):
+        currency_strengths = get_all_currency_strengths() 
         for pair in forex_pairs:
             raw_sig = check_pair_alignment(pair, currency_strengths) 
-            
             if raw_sig:
-                # System aligned, sending to AI for Fundamentals & COT
-                ai_verification = verify_signal_with_ai(raw_sig, cot_df, news_df)
+                phase1_setups.append(raw_sig)
                 
-                if ai_verification:
-                    found_any = True
-                    color = "🟢" if raw_sig['Type'] == "BUY" else "🔴"
-                    with st.expander(f"{color} {raw_sig['Type']} {raw_sig['Pair']} - AI Score: {ai_verification['Score']}%", expanded=True):
-                        st.write(f"🏗️ **System Check:** {raw_sig['Logic']}")
-                        st.info(f"🤖 **AI Fundamental Check:** {ai_verification['Reason']}")
-                        st.progress(ai_verification['Score']/100)
+    if phase1_setups:
+        for sig in phase1_setups:
+            color = "🟢" if sig['Type'] == "BUY" else "🔴"
+            st.info(f"{color} **{sig['Type']} {sig['Pair']}** | 🏗️ {sig['Logic']}")
+    else:
+        st.write("💤 Filhal koi Technical Setup (Phase 1) align nahi hua. Waiting...")
 
-    if not found_any: 
-        st.info("💤 No dual-leg structural alignment found at this moment. Waiting for perfect Base vs Quote divergence...")
+    st.divider()
     
+    # ---------------------------------------------
+    # PHASE 2: AI FUNDAMENTAL VERIFICATION
+    # ---------------------------------------------
+    st.subheader("🤖 Phase 2: AI Verified Setups (COT & News)")
+    
+    if phase1_setups:
+        with st.spinner('AI is verifying Technical Setups...'):
+            for sig in phase1_setups:
+                ai_verification = verify_signal_with_ai(sig, cot_df, news_df)
+                
+                # Agar AI ne properly verify kiya aur error nahi aya toh is list mein dalein
+                if ai_verification and "Error" not in ai_verification['Reason']:
+                    ai_verified_setups.append({"signal": sig, "ai": ai_verification})
+        
+        if ai_verified_setups:
+            for item in ai_verified_setups:
+                sig = item['signal']
+                ai = item['ai']
+                color = "🟢" if sig['Type'] == "BUY" else "🔴"
+                with st.expander(f"{color} {sig['Type']} {sig['Pair']} - AI Score: {ai['Score']}%", expanded=True):
+                    st.write(f"🏗️ **System Check:** {sig['Logic']}")
+                    st.success(f"🤖 **AI Verdict:** {ai['Reason']}")
+                    st.progress(ai['Score']/100)
+        else:
+             st.warning("Phase 1 ke setups ko AI ne Fundamentally (COT/News) reject kar diya hai ya verify nahi kar saka.")
+    else:
+        st.write("Phase 1 mein koi setup nahi aaya is liye AI Verification pending hai.")
+
     st.divider()
     st.subheader("📅 Scheduled News (High Impact)")
     if not news_df.empty:
@@ -273,4 +290,9 @@ with col_right:
 
 st.divider()
 query = st.chat_input("Ask Gemini about fundamental alignment...")
-if query and ai_model: st.write(f"🤖: {ai_model.generate_content(query).text}")
+if query and ai_model: 
+    try:
+        response = ai_model.generate_content(query)
+        st.write(f"🤖: {response.text}")
+    except Exception as e:
+        st.error(f"⚠️ Gemini API connection error. Details: {e}")
