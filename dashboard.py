@@ -297,16 +297,25 @@ with col_right:
         st.dataframe(cot_df.style.map(style_cot), hide_index=True, use_container_width=True)
     
     st.divider()
-    st.subheader("⚡ Live Squawk")
-    if squawk_list:
-        for item in squawk_list:
-            st.markdown(f"**{item['Headline']}**<br><small>{item['Time']}</small><hr>", unsafe_allow_html=True)
-
-st.divider()
 query = st.chat_input("Ask Gemini about fundamental alignment...")
+
 if query and ai_model: 
     try:
-        response = ai_model.generate_content(query)
-        st.write(f"🤖: {response.text}")
+        # AI ko strict hidayat (Prompt Engineering)
+        system_prompt = f"""
+        You are an expert Forex Quant Trader assisting a professional trader.
+        The user is asking you: "{query}"
+
+        STRICT RULES FOR YOUR RESPONSE:
+        1. Language: You MUST reply ONLY in Roman Urdu (Urdu written in English alphabets). DO NOT use Hindi, Devanagari script, or pure English.
+        2. Scope: Focus strictly on the Forex market (EUR, GBP, USD, JPY, AUD, NZD, CAD, CHF) and Gold (XAUUSD). 
+        3. Restrictions: DO NOT mention the Indian Stock Market (Nifty, Sensex), Crypto, or any irrelevant regional equities. 
+        4. Tone: Keep the analysis professional, crisp, and to the point.
+        """
+        
+        with st.spinner("AI is analyzing the market..."):
+            response = ai_model.generate_content(system_prompt)
+            st.write(f"🤖: {response.text}")
+            
     except Exception as e:
         st.error(f"⚠️ Gemini API connection error. Details: {e}")
