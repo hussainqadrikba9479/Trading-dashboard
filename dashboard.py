@@ -15,17 +15,17 @@ try:
     api_key = st.secrets["GEMINI_API_KEY"]
     genai.configure(api_key=api_key)
     
-    # AI khud check karega ke Google ki taraf se konsa model allowed hai
-    available_models = []
+    working_model = None
+    # Google ke saare models ki list check karega
     for m in genai.list_models():
-        if 'generateContent' in m.supported_generation_methods:
-            # Model ka naam clean kar ke list mein daal do
-            clean_name = m.name.replace('models/', '')
-            available_models.append(clean_name)
+        # Shart 1: Model naya ho (generateContent support kare)
+        # Shart 2: Model ke naam mein 'gemini' lazmi aata ho (Purane models ko reject kar dega)
+        if 'generateContent' in m.supported_generation_methods and 'gemini' in m.name.lower():
+            working_model = m.name.replace('models/', '')
+            break # Jaise hi pehla theek Gemini model mile, dhoondna band kar do
             
-    if available_models:
-        # Jo bhi pehla available model ho (jaise gemini-1.5-flash ya koi aur), usay auto-select kar lo
-        ai_model = genai.GenerativeModel(available_models[-1]) 
+    if working_model:
+        ai_model = genai.GenerativeModel(working_model) 
     else:
         ai_model = None
         
