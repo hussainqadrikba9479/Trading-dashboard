@@ -9,28 +9,21 @@ import pytz
 from email.utils import parsedate_to_datetime
 
 # --- 1. CONFIGURATION & PAGE SETUP ---
-st.set_page_config(page_title="Hussain Algo Terminal V14 (2-Phase UI)", page_icon="⚡", layout="wide")
+st.set_page_config(page_title="Hussain Algo Terminal V15 (Wyckoff Engine)", page_icon="⚡", layout="wide")
 
 try:
     api_key = st.secrets["GEMINI_API_KEY"]
     genai.configure(api_key=api_key)
     
     working_model = None
-    # Google ke saare models ki list check karega
     for m in genai.list_models():
-        # Shart 1: Model naya ho (generateContent support kare)
-        # Shart 2: Model ke naam mein 'gemini' lazmi aata ho (Purane models ko reject kar dega)
         if 'generateContent' in m.supported_generation_methods and 'gemini' in m.name.lower():
             working_model = m.name.replace('models/', '')
-            break # Jaise hi pehla theek Gemini model mile, dhoondna band kar do
+            break 
             
-    if working_model:
-        ai_model = genai.GenerativeModel(working_model) 
-    else:
-        ai_model = None
-        
-except Exception as e:
-    ai_model = None
+    if working_model: ai_model = genai.GenerativeModel(working_model) 
+    else: ai_model = None
+except Exception as e: ai_model = None
 
 # --- 2. DATA ENGINES (COT & NEWS ONLY) ---
 
@@ -104,7 +97,7 @@ def get_news_and_squawk():
     return pd.DataFrame(news), squawk
 
 
-# --- 3. DUAL-LEG VSA & STRUCTURE ENGINE ---
+# --- 3. DUAL-LEG WYCKOFF VSA ENGINE ---
 
 @st.cache_data(ttl=60)
 def get_all_currency_strengths():
@@ -122,29 +115,61 @@ def get_all_currency_strengths():
         try:
             ticker = yf.Ticker(tickers[curr])
             df = ticker.history(period="5d", interval="1h")
-            if df.empty or len(df) < 21: 
-                strengths[curr] = "Neutral"
+            if df.empty or len(df) < 25: 
+                strengths[curr] = {"status": "Neutral", "reason": "Not Enough Data"}
                 continue
-                
-            avg_vol = df['Volume'].rolling(20).mean().iloc[-1]
+            
+            # VSA Variables
+            prev_high = df['High'].rolling(20).max().shift(1).iloc[-1]
+            prev_low = df['Low'].rolling(20).min().shift(1).iloc[-1]
+            avg_vol = df['Volume'].rolling(20).mean().shift(1).iloc[-1]
+            
+            curr_close = df['Close'].iloc[-1]
+            curr_high = df['High'].iloc[-1]
+            curr_low = df['Low'].iloc[-1]
             curr_vol = df['Volume'].iloc[-1]
-            is_high_vol = curr_vol > (avg_vol * 1.5) if avg_vol > 0 else False
+            prev_close = df['Close'].iloc[-2]
             
-            last_close = df['Close'].iloc[-1]
-            prev_high = df['High'].rolling(20).max().iloc[-2]
-            prev_low = df['Low'].rolling(20).min().iloc[-2]
+            is_high_vol = curr_vol > (avg_vol * 1.3) if avg_vol > 0 else False
             
-            is_bullish = last_close > prev_high
-            is_bearish = last_close < prev_low
+            # --- VIDEO SETUPS LOGIC ---
             
+            # Setup 1: Spring / Shakeout (Price pierced low, but closed inside with volume)
+            is_spring = (curr_low < prev_low) and (curr_close > prev_low) and is_high_vol
+            
+            # Setup 2: Upthrust (Price pierced high, but closed inside with volume)
+            is_upthrust = (curr_high > prev_high) and (curr_close < prev_high) and is_high_vol
+            
+            # Setup 3: Breakout Retest (Recent breakout up, now pulling back)
+            recent_bo_up = (df['Close'].iloc[-5:-1] > df['High'].rolling(20).max().shift(1).iloc[-5:-1]).any()
+            is_retest_buy = recent_bo_up and (curr_close < prev_close) and (curr_close > prev_low)
+            
+            # Setup 4: Breakdown Retest (Recent breakdown down, now pulling back up)
+            recent_bo_down = (df['Close'].iloc[-5:-1] < df['Low'].rolling(20).min().shift(1).iloc[-5:-1]).any()
+            is_retest_sell = recent_bo_down and (curr_close > prev_close) and (curr_close < prev_high)
+            
+            status = "Neutral"
+            reason = "Ranging / No Setup"
+            
+            if is_spring:
+                status, reason = "Strong", "Spring / Shakeout (Support Rejection)"
+            elif is_upthrust:
+                status, reason = "Weak", "Upthrust (Resistance Rejection)"
+            elif is_retest_buy:
+                status, reason = "Strong", "Trend Continuation (Pullback Retest)"
+            elif is_retest_sell:
+                status, reason = "Weak", "Downtrend Continuation (Pullback Retest)"
+
+            # Handle Inverted Pairs (CAD, CHF, JPY)
             if curr in inverted:
-                is_bullish, is_bearish = is_bearish, is_bullish
-                
-            if is_bullish and is_high_vol: strengths[curr] = "Strong"
-            elif is_bearish and is_high_vol: strengths[curr] = "Weak"
-            else: strengths[curr] = "Neutral"
+                if status == "Strong":
+                    status, reason = "Weak", reason.replace("Strong", "Weak")
+                elif status == "Weak":
+                    status, reason = "Strong", reason.replace("Weak", "Strong")
+                    
+            strengths[curr] = {"status": status, "reason": reason}
         except:
-            strengths[curr] = "Neutral"
+            strengths[curr] = {"status": "Neutral", "reason": "Error"}
             
     return strengths
 
@@ -152,22 +177,24 @@ def check_pair_alignment(pair, strengths_dict):
     base = 'XAU' if pair == 'XAUUSD' else pair[:3]
     quote = 'USD' if pair == 'XAUUSD' else pair[3:]
     
-    base_str = strengths_dict.get(base, "Neutral")
-    quote_str = strengths_dict.get(quote, "Neutral")
+    base_data = strengths_dict.get(base, {"status": "Neutral"})
+    quote_data = strengths_dict.get(quote, {"status": "Neutral"})
+    
+    base_str = base_data["status"]
+    quote_str = quote_data["status"]
     
     if base_str == "Strong" and quote_str == "Weak":
-        return {"Pair": pair, "Type": "BUY", "Logic": f"Base ({base}) is Strong + Quote ({quote}) is Weak"}
+        return {"Pair": pair, "Type": "BUY", "Logic": f"Base [{base_data['reason']}] + Quote [{quote_data['reason']}]"}
     elif base_str == "Weak" and quote_str == "Strong":
-        return {"Pair": pair, "Type": "SELL", "Logic": f"Base ({base}) is Weak + Quote ({quote}) is Strong"}
+        return {"Pair": pair, "Type": "SELL", "Logic": f"Base [{base_data['reason']}] + Quote [{quote_data['reason']}]"}
     return None
 
 def verify_signal_with_ai(raw_signal, cot_data, news_data):
     if not ai_model or not raw_signal: return None
     base = 'XAU' if raw_signal['Pair'] == 'XAUUSD' else raw_signal['Pair'][:3]
     quote = 'USD' if raw_signal['Pair'] == 'XAUUSD' else raw_signal['Pair'][3:]
-    
     prompt = f"""
-    Analyze this dual-leg setup:
+    Analyze this Wyckoff VSA setup:
     Pair: {raw_signal['Pair']} ({raw_signal['Type']})
     Logic: {raw_signal['Logic']}.
     Are there any extreme COT conditions or High Impact news for {base}/{quote} today?
@@ -177,7 +204,7 @@ def verify_signal_with_ai(raw_signal, cot_data, news_data):
         response = ai_model.generate_content(prompt)
         return {"Score": 90, "Reason": response.text[:280]} 
     except Exception as e:
-        return {"Score": 0, "Reason": f"Error"} # Simple error tag so it doesn't show in verified section
+        return {"Score": 0, "Reason": f"Error"}
 
 # --- 4. OUTPUT BLOCKS ---
 
@@ -230,38 +257,52 @@ with col_left:
     phase1_setups = []
     ai_verified_setups = []
     
-    # ---------------------------------------------
-    # PHASE 1: TECHNICAL SCAN (VSA & STRUCTURE ONLY)
-    # ---------------------------------------------
-    st.subheader("⚙️ Phase 1: Technical Setups (VSA & Structure)")
-    
-    with st.spinner('Scanning Phase 1 (Base vs Quote)...'):
+    st.subheader("📡 Live Engine Status (Wyckoff Scanner)")
+    with st.spinner('Scanning Market Pulse...'):
         currency_strengths = get_all_currency_strengths() 
-        for pair in forex_pairs:
-            raw_sig = check_pair_alignment(pair, currency_strengths) 
-            if raw_sig:
-                phase1_setups.append(raw_sig)
+        
+        cols = st.columns(len(currency_strengths))
+        for i, (cur, data) in enumerate(currency_strengths.items()):
+            strength = data["status"]
+            if strength == "Strong":
+                bg_color = "#1a5c20"
+                icon = "🟢"
+            elif strength == "Weak":
+                bg_color = "#5c1a1a"
+                icon = "🔴"
+            else:
+                bg_color = "#2b2b2b"
+                icon = "⚪"
+                
+            cols[i].markdown(
+                f"<div style='text-align:center; padding:10px; margin-bottom:15px; border-radius:8px; background-color:{bg_color}; border:1px solid #444;'>"
+                f"<span style='font-size:12px; color:#ccc;'>{cur}</span><br>"
+                f"<b>{icon} {strength}</b></div>", 
+                unsafe_allow_html=True
+            )
+
+    st.subheader("⚙️ Phase 1: Technical Setups (Dual-Leg)")
+    
+    for pair in forex_pairs:
+        raw_sig = check_pair_alignment(pair, currency_strengths) 
+        if raw_sig:
+            phase1_setups.append(raw_sig)
                 
     if phase1_setups:
         for sig in phase1_setups:
             color = "🟢" if sig['Type'] == "BUY" else "🔴"
             st.info(f"{color} **{sig['Type']} {sig['Pair']}** | 🏗️ {sig['Logic']}")
     else:
-        st.write("💤 Filhal koi Technical Setup (Phase 1) align nahi hua. Waiting...")
+        st.write("💤 Filhal Phase 1 mein koi Wyckoff Alignment nahi. Engine sirf specific Setups (Spring, Upthrust, Retest) ka wait kar raha hai.")
 
     st.divider()
     
-    # ---------------------------------------------
-    # PHASE 2: AI FUNDAMENTAL VERIFICATION
-    # ---------------------------------------------
     st.subheader("🤖 Phase 2: AI Verified Setups (COT & News)")
     
     if phase1_setups:
         with st.spinner('AI is verifying Technical Setups...'):
             for sig in phase1_setups:
                 ai_verification = verify_signal_with_ai(sig, cot_df, news_df)
-                
-                # Agar AI ne properly verify kiya aur error nahi aya toh is list mein dalein
                 if ai_verification and "Error" not in ai_verification['Reason']:
                     ai_verified_setups.append({"signal": sig, "ai": ai_verification})
         
@@ -275,7 +316,7 @@ with col_left:
                     st.success(f"🤖 **AI Verdict:** {ai['Reason']}")
                     st.progress(ai['Score']/100)
         else:
-             st.warning("Phase 1 ke setups ko AI ne Fundamentally (COT/News) reject kar diya hai ya verify nahi kar saka.")
+             st.warning("Phase 1 ke setups ko AI ne Fundamentally (COT/News) reject kar diya hai.")
     else:
         st.write("Phase 1 mein koi setup nahi aaya is liye AI Verification pending hai.")
 
@@ -297,11 +338,19 @@ with col_right:
         st.dataframe(cot_df.style.map(style_cot), hide_index=True, use_container_width=True)
     
     st.divider()
+    
+    st.subheader("⚡ Live Squawk")
+    if squawk_list:
+        for item in squawk_list:
+            st.markdown(f"**{item['Headline']}**<br><small>{item['Time']}</small><hr>", unsafe_allow_html=True)
+    else:
+        st.info("📡 Live news feed se connection check ho raha hai. Filhal koi new headline nahi...")
+
+st.divider()
 query = st.chat_input("Ask Gemini about fundamental alignment...")
 
 if query and ai_model: 
     try:
-        # AI ko strict hidayat (Prompt Engineering)
         system_prompt = f"""
         You are an expert Forex Quant Trader assisting a professional trader.
         The user is asking you: "{query}"
@@ -312,7 +361,6 @@ if query and ai_model:
         3. Restrictions: DO NOT mention the Indian Stock Market (Nifty, Sensex), Crypto, or any irrelevant regional equities. 
         4. Tone: Keep the analysis professional, crisp, and to the point.
         """
-        
         with st.spinner("AI is analyzing the market..."):
             response = ai_model.generate_content(system_prompt)
             st.write(f"🤖: {response.text}")
