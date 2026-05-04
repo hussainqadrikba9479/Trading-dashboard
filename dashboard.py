@@ -9,7 +9,7 @@ import pytz
 from email.utils import parsedate_to_datetime
 
 # --- 1. CONFIGURATION & PAGE SETUP ---
-st.set_page_config(page_title="Hussain Algo Terminal V15 (Wyckoff Engine)", page_icon="⚡", layout="wide")
+st.set_page_config(page_title="Hussain Algo Terminal V16 (News & Wyckoff Only)", page_icon="⚡", layout="wide")
 
 try:
     api_key = st.secrets["GEMINI_API_KEY"]
@@ -25,25 +25,7 @@ try:
     else: ai_model = None
 except Exception as e: ai_model = None
 
-# --- 2. DATA ENGINES (COT & NEWS ONLY) ---
-
-@st.cache_data(ttl=3600)
-def load_cot_data():
-    try:
-        df = pd.read_excel("COT.xlsm", sheet_name="Main", engine='openpyxl', skiprows=2)
-        df = df.iloc[:, [0, 1, 6, 10, 11]]
-        df.columns = ['Instrument', 'Net Change', 'Direction', 'COT_Index_NComm', 'COT_Index_Comm']
-        return df.dropna(subset=['Instrument'])
-    except: return pd.DataFrame()
-
-def style_cot(val):
-    if isinstance(val, str):
-        if 'Top' in val: return 'background-color: #5c1a1a; color: white'
-        if 'Bottom' in val: return 'background-color: #1a5c20; color: white'
-    elif isinstance(val, (int, float)):
-        if val > 0: return 'color: #00ff00'
-        if val < 0: return 'color: #ff4c4c'
-    return ''
+# --- 2. DATA ENGINE (NEWS ONLY) ---
 
 @st.cache_data(ttl=300)
 def get_news_and_squawk():
@@ -85,7 +67,7 @@ def get_news_and_squawk():
         r2 = requests.get("https://www.forexlive.com/feed/news", headers=headers, timeout=10)
         root2 = ET.fromstring(r2.content)
         for i, item in enumerate(root2.findall('.//item')):
-            if i >= 7: break
+            if i >= 10: break # Increased squawk items slightly to fill empty space
             pub_date = item.find('pubDate').text
             try:
                 dt_obj = parsedate_to_datetime(pub_date)
@@ -132,8 +114,6 @@ def get_all_currency_strengths():
             
             is_high_vol = curr_vol > (avg_vol * 1.3) if avg_vol > 0 else False
             
-            # --- VIDEO SETUPS LOGIC ---
-            
             # Setup 1: Spring / Shakeout (Price pierced low, but closed inside with volume)
             is_spring = (curr_low < prev_low) and (curr_close > prev_low) and is_high_vol
             
@@ -160,7 +140,7 @@ def get_all_currency_strengths():
             elif is_retest_sell:
                 status, reason = "Weak", "Downtrend Continuation (Pullback Retest)"
 
-            # Handle Inverted Pairs (CAD, CHF, JPY)
+            # Handle Inverted Pairs
             if curr in inverted:
                 if status == "Strong":
                     status, reason = "Weak", reason.replace("Strong", "Weak")
@@ -189,7 +169,7 @@ def check_pair_alignment(pair, strengths_dict):
         return {"Pair": pair, "Type": "SELL", "Logic": f"Base [{base_data['reason']}] + Quote [{quote_data['reason']}]"}
     return None
 
-def verify_signal_with_ai(raw_signal, cot_data, news_data):
+def verify_signal_with_ai(raw_signal, news_data):
     if not ai_model or not raw_signal: return None
     base = 'XAU' if raw_signal['Pair'] == 'XAUUSD' else raw_signal['Pair'][:3]
     quote = 'USD' if raw_signal['Pair'] == 'XAUUSD' else raw_signal['Pair'][3:]
@@ -197,7 +177,7 @@ def verify_signal_with_ai(raw_signal, cot_data, news_data):
     Analyze this Wyckoff VSA setup:
     Pair: {raw_signal['Pair']} ({raw_signal['Type']})
     Logic: {raw_signal['Logic']}.
-    Are there any extreme COT conditions or High Impact news for {base}/{quote} today?
+    Are there any High Impact news events or current fundamental trends for {base} or {quote} today that support or oppose this trade?
     Give a short expert verdict and Confidence Score out of 100%.
     """
     try:
@@ -251,7 +231,6 @@ col_left, col_right = st.columns([2.5, 1])
 
 with col_left:
     
-    cot_df = load_cot_data() 
     news_df, squawk_list = get_news_and_squawk() 
     
     phase1_setups = []
@@ -297,12 +276,12 @@ with col_left:
 
     st.divider()
     
-    st.subheader("🤖 Phase 2: AI Verified Setups (COT & News)")
+    st.subheader("🤖 Phase 2: AI Verified Setups (News Fundamentals)")
     
     if phase1_setups:
-        with st.spinner('AI is verifying Technical Setups...'):
+        with st.spinner('AI is verifying News & Fundamentals...'):
             for sig in phase1_setups:
-                ai_verification = verify_signal_with_ai(sig, cot_df, news_df)
+                ai_verification = verify_signal_with_ai(sig, news_df)
                 if ai_verification and "Error" not in ai_verification['Reason']:
                     ai_verified_setups.append({"signal": sig, "ai": ai_verification})
         
@@ -316,7 +295,7 @@ with col_left:
                     st.success(f"🤖 **AI Verdict:** {ai['Reason']}")
                     st.progress(ai['Score']/100)
         else:
-             st.warning("Phase 1 ke setups ko AI ne Fundamentally (COT/News) reject kar diya hai.")
+             st.warning("Phase 1 ke setups ko AI ne Fundamentally (News) reject kar diya hai.")
     else:
         st.write("Phase 1 mein koi setup nahi aaya is liye AI Verification pending hai.")
 
@@ -333,12 +312,7 @@ with col_left:
         st.markdown(html_table, unsafe_allow_html=True)
 
 with col_right:
-    st.subheader("🏦 Smart Money (COT)")
-    if not cot_df.empty:
-        st.dataframe(cot_df.style.map(style_cot), hide_index=True, use_container_width=True)
-    
-    st.divider()
-    
+    # COT yahan se mukammal remove ho chuka hai
     st.subheader("⚡ Live Squawk")
     if squawk_list:
         for item in squawk_list:
@@ -358,7 +332,7 @@ if query and ai_model:
         STRICT RULES FOR YOUR RESPONSE:
         1. Language: You MUST reply ONLY in Roman Urdu (Urdu written in English alphabets). DO NOT use Hindi, Devanagari script, or pure English.
         2. Scope: Focus strictly on the Forex market (EUR, GBP, USD, JPY, AUD, NZD, CAD, CHF) and Gold (XAUUSD). 
-        3. Restrictions: DO NOT mention the Indian Stock Market (Nifty, Sensex), Crypto, or any irrelevant regional equities. 
+        3. Restrictions: Focus on Wyckoff VSA and News Fundamentals. DO NOT mention the Indian Stock Market, Crypto, or COT.
         4. Tone: Keep the analysis professional, crisp, and to the point.
         """
         with st.spinner("AI is analyzing the market..."):
