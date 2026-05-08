@@ -150,7 +150,20 @@ def verify_signal_with_ai(ai_model, action, pair, logic, squawk_list):
 # ==========================================
 def run_bot():
     print("🔄 Starting Auto-Scan (GitHub Actions)...")
-    
+    now_pkt = datetime.now(pytz.timezone('Asia/Karachi'))
+
+    # ---------------------------------------------------------
+    # DAILY WELCOME / TEST EMAIL LOGIC (HEARTBEAT)
+    # ---------------------------------------------------------
+    if not is_already_sent("TEST", "WELCOME_EMAIL"):
+        welcome_sub = "✅ Hussain Algo: Bot is Active (Daily Test)"
+        welcome_body = f"Bhai!\n\nAap ka 24/7 Algo Trading Bot background mein bilkul theek chal raha hai. Yeh aaj ka daily test message hai.\n\nTime: {now_pkt.strftime('%I:%M %p')} (PKT)\n\nSystem abhi market (Wyckoff VSA + AI News) ko monitor kar raha hai. Jaise hi koi achha setup milega, aap ko fauran email mil jayegi.\n\nHappy Trading!"
+        
+        print("📧 Sending Daily Welcome/Test Email...")
+        if send_email_alert(welcome_sub, welcome_body):
+            mark_as_sent("TEST", "WELCOME_EMAIL")
+    # ---------------------------------------------------------
+
     api_key = os.environ.get("GEMINI_API_KEY")
     ai_model = None
     if api_key:
@@ -181,9 +194,8 @@ def run_bot():
                 verdict = verify_signal_with_ai(ai_model, action, pair, logic, live_news)
                 
                 if "Error" not in verdict and "Offline" not in verdict:
-                    now_pkt = datetime.now(pytz.timezone('Asia/Karachi'))
                     email_subject = f"Setup: {action} {pair}"
-                    email_body = f"Hussain Algo Terminal (24/7 Background Watchdog)\n\nSetup: {action} {pair}\nLogic: {logic}\n\n🤖 AI Verdict:\n{verdict}\n\nTime: {now_pkt.strftime('%I:%M %p')} (PKT)"
+                    email_body = f"Hussain Algo Terminal (24/7 Background Watchdog)\n\nSetup: {action} {pair}\nLogic: {logic}\n\n🤖 AI Verdict:\n{verdict}\n\nTime: {datetime.now(pytz.timezone('Asia/Karachi')).strftime('%I:%M %p')} (PKT)"
                     
                     if send_email_alert(email_subject, email_body):
                         mark_as_sent(pair, action)
