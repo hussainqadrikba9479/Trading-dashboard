@@ -9,7 +9,7 @@ import pytz
 from email.utils import parsedate_to_datetime
 
 # --- 1. CONFIGURATION & PAGE SETUP ---
-st.set_page_config(page_title="Hussain Algo Terminal V16 (News & Wyckoff Only)", page_icon="⚡", layout="wide")
+st.set_page_config(page_title="Hussain Algo Terminal V17 (AlertBot Engine)", page_icon="⚡", layout="wide")
 
 try:
     api_key = st.secrets["GEMINI_API_KEY"]
@@ -25,7 +25,69 @@ try:
     else: ai_model = None
 except Exception as e: ai_model = None
 
-# --- 2. DATA ENGINE (NEWS ONLY) ---
+# --- 2. ALERTBOT DATA ENGINES (COT, OI, MARKETS) ---
+
+@st.cache_data(ttl=3600)
+def load_cot_data():
+    try:
+        df_cot = pd.read_excel("COT.xlsm", sheet_name="Main", engine='openpyxl', usecols="A,B,G,K,P", skiprows=2, header=None)
+        df_cot.columns = ['Instrument', 'Net Change', 'Direction', 'COT Index', 'OI Change']
+        return df_cot.dropna(subset=['Instrument'])
+    except: return pd.DataFrame()
+
+@st.cache_data(ttl=3600)
+def load_daily_oi():
+    try:
+        df = pd.read_excel("Daily_OI.xlsm", sheet_name="Data", engine='openpyxl')
+        df.columns = df.columns.astype(str).str.replace('\n', ' ').str.replace('\r', '')
+        col_map = {'USD': 'USD', 'Euro': 'EUR', 'Pound': 'GBP', 'Australian': 'AUD', 'Zealand': 'NZD', 'Canadian': 'CAD', 'Swiss': 'CHF', 'Yen': 'JPY', 'Gold': 'XAU'}
+        oi_list = []
+        for keyword, symbol in col_map.items():
+            matched_col = next((col for col in df.columns if keyword.lower() in col.lower()), None)
+            if matched_col:
+                valid_data = pd.to_numeric(df[matched_col], errors='coerce').dropna().values
+                if len(valid_data) >= 2:
+                    curr_oi, prev_oi = valid_data[0], valid_data[1]
+                    change = curr_oi - prev_oi
+                    status = "Increasing 🟢" if change > 0 else "Decreasing 🔴"
+                    oi_list.append({'Instrument': symbol, 'Current OI': int(curr_oi), 'Status': status})
+        return pd.DataFrame(oi_list)
+    except: return pd.DataFrame()
+
+@st.cache_data(ttl=300)
+def get_market_data():
+    data_list = []
+    # UI aur Dashboard dono jagah GOLD ko XAU rakha hai taake sync rahay
+    symbols = {'USD': 'DX-Y.NYB', 'XAU': 'GC=F', 'EUR': '6E=F', 'GBP': '6B=F', 'JPY': '6J=F', 'AUD': '6A=F', 'CAD': '6C=F', 'CHF': '6S=F', 'NZD': '6N=F'}
+    interval = "1h" # Swing Trading D1 + H4
+    
+    for name, ticker in symbols.items():
+        try:
+            df = yf.download(ticker, period="1mo", interval=interval, progress=False)
+            if isinstance(df.columns, pd.MultiIndex): df.columns = df.columns.droplevel(1)
+            
+            if df.empty or len(df) < 25: continue
+                
+            close, sma = df['Close'].iloc[-1], df['Close'].rolling(20).mean().iloc[-1]
+            vol, avg_vol = df['Volume'].iloc[-1], df['Volume'].rolling(20).mean().iloc[-1]
+            
+            score = 5
+            if close > sma: score = 7 if close > df['High'].iloc[-5] else 6
+            else: score = 3 if close < df['Low'].iloc[-5] else 4
+            
+            vol_confirm = "✅" if vol > avg_vol else "❌"
+            status = "Strong" if score >= 6 else "Weak" if score <= 4 else "Neutral"
+            
+            data_list.append({
+                'Instrument': name, 
+                'Score': score, 
+                'Status': status,
+                'Volume Confirm': vol_confirm
+            })
+        except: 
+            data_list.append({'Instrument': name, 'Score': 5, 'Status': 'Neutral', 'Volume Confirm': 'Error'})
+            
+    return pd.DataFrame(data_list)
 
 @st.cache_data(ttl=300)
 def get_news_and_squawk():
@@ -42,7 +104,6 @@ def get_news_and_squawk():
             if impact == 'High' or 'Holiday' in title:
                 date_str = item.find('date').text
                 time_str = item.find('time').text
-                forecast = item.find('forecast').text if item.find('forecast') is not None else "-"
                 actual = item.find('actual').text if item.find('actual') is not None else "-"
                 is_past = False
                 display_time = time_str
@@ -63,11 +124,10 @@ def get_news_and_squawk():
     
     squawk = []
     try:
-        headers = {'User-Agent': 'Mozilla/5.0'}
-        r2 = requests.get("https://www.forexlive.com/feed/news", headers=headers, timeout=10)
+        r2 = requests.get("https://www.forexlive.com/feed", headers={'User-Agent': 'Mozilla/5.0'}, timeout=10)
         root2 = ET.fromstring(r2.content)
         for i, item in enumerate(root2.findall('.//item')):
-            if i >= 10: break # Increased squawk items slightly to fill empty space
+            if i >= 6: break
             pub_date = item.find('pubDate').text
             try:
                 dt_obj = parsedate_to_datetime(pub_date)
@@ -78,126 +138,32 @@ def get_news_and_squawk():
     except: pass
     return pd.DataFrame(news), squawk
 
+# --- 3. TRADE MATCHING LOGIC (Same as AlertBot) ---
 
-# --- 3. DUAL-LEG WYCKOFF VSA ENGINE ---
-
-@st.cache_data(ttl=60)
-def get_all_currency_strengths():
-    currencies = ['USD', 'EUR', 'GBP', 'AUD', 'NZD', 'CAD', 'CHF', 'JPY', 'XAU']
-    strengths = {}
+def verify_signal_with_ai(action, pair, s_score, w_score, squawk_list):
+    if not ai_model: return {"Score": 0, "Reason": "AI Offline"}
     
-    tickers = {
-        'USD': 'DX-Y.NYB', 'EUR': 'EURUSD=X', 'GBP': 'GBPUSD=X',
-        'AUD': 'AUDUSD=X', 'NZD': 'NZDUSD=X', 'CAD': 'USDCAD=X',
-        'CHF': 'USDCHF=X', 'JPY': 'USDJPY=X', 'XAU': 'GC=F'
-    }
-    inverted = ['CAD', 'CHF', 'JPY']
+    news_str = "\n".join([n['Headline'] for n in squawk_list]) if squawk_list else "No major news"
+    prompt = f"Expert Analyst: {action} setup on {pair}. Strength {s_score} vs {w_score}. COT/Vol/OI Aligned. Live News: {news_str}. Batao yeh trade safe hai ya news risk? (Roman Urdu, 2 lines max)"
     
-    for curr in currencies:
-        try:
-            ticker = yf.Ticker(tickers[curr])
-            df = ticker.history(period="5d", interval="1h")
-            if df.empty or len(df) < 25: 
-                strengths[curr] = {"status": "Neutral", "reason": "Not Enough Data"}
-                continue
-            
-            # VSA Variables
-            prev_high = df['High'].rolling(20).max().shift(1).iloc[-1]
-            prev_low = df['Low'].rolling(20).min().shift(1).iloc[-1]
-            avg_vol = df['Volume'].rolling(20).mean().shift(1).iloc[-1]
-            
-            curr_close = df['Close'].iloc[-1]
-            curr_high = df['High'].iloc[-1]
-            curr_low = df['Low'].iloc[-1]
-            curr_vol = df['Volume'].iloc[-1]
-            prev_close = df['Close'].iloc[-2]
-            
-            is_high_vol = curr_vol > (avg_vol * 1.3) if avg_vol > 0 else False
-            
-            # Setup 1: Spring / Shakeout (Price pierced low, but closed inside with volume)
-            is_spring = (curr_low < prev_low) and (curr_close > prev_low) and is_high_vol
-            
-            # Setup 2: Upthrust (Price pierced high, but closed inside with volume)
-            is_upthrust = (curr_high > prev_high) and (curr_close < prev_high) and is_high_vol
-            
-            # Setup 3: Breakout Retest (Recent breakout up, now pulling back)
-            recent_bo_up = (df['Close'].iloc[-5:-1] > df['High'].rolling(20).max().shift(1).iloc[-5:-1]).any()
-            is_retest_buy = recent_bo_up and (curr_close < prev_close) and (curr_close > prev_low)
-            
-            # Setup 4: Breakdown Retest (Recent breakdown down, now pulling back up)
-            recent_bo_down = (df['Close'].iloc[-5:-1] < df['Low'].rolling(20).min().shift(1).iloc[-5:-1]).any()
-            is_retest_sell = recent_bo_down and (curr_close > prev_close) and (curr_close < prev_high)
-            
-            status = "Neutral"
-            reason = "Ranging / No Setup"
-            
-            if is_spring:
-                status, reason = "Strong", "Spring / Shakeout (Support Rejection)"
-            elif is_upthrust:
-                status, reason = "Weak", "Upthrust (Resistance Rejection)"
-            elif is_retest_buy:
-                status, reason = "Strong", "Trend Continuation (Pullback Retest)"
-            elif is_retest_sell:
-                status, reason = "Weak", "Downtrend Continuation (Pullback Retest)"
-
-            # Handle Inverted Pairs
-            if curr in inverted:
-                if status == "Strong":
-                    status, reason = "Weak", reason.replace("Strong", "Weak")
-                elif status == "Weak":
-                    status, reason = "Strong", reason.replace("Weak", "Strong")
-                    
-            strengths[curr] = {"status": status, "reason": reason}
-        except:
-            strengths[curr] = {"status": "Neutral", "reason": "Error"}
-            
-    return strengths
-
-def check_pair_alignment(pair, strengths_dict):
-    base = 'XAU' if pair == 'XAUUSD' else pair[:3]
-    quote = 'USD' if pair == 'XAUUSD' else pair[3:]
-    
-    base_data = strengths_dict.get(base, {"status": "Neutral"})
-    quote_data = strengths_dict.get(quote, {"status": "Neutral"})
-    
-    base_str = base_data["status"]
-    quote_str = quote_data["status"]
-    
-    if base_str == "Strong" and quote_str == "Weak":
-        return {"Pair": pair, "Type": "BUY", "Logic": f"Base [{base_data['reason']}] + Quote [{quote_data['reason']}]"}
-    elif base_str == "Weak" and quote_str == "Strong":
-        return {"Pair": pair, "Type": "SELL", "Logic": f"Base [{base_data['reason']}] + Quote [{quote_data['reason']}]"}
-    return None
-
-def verify_signal_with_ai(raw_signal, news_data):
-    if not ai_model or not raw_signal: return None
-    base = 'XAU' if raw_signal['Pair'] == 'XAUUSD' else raw_signal['Pair'][:3]
-    quote = 'USD' if raw_signal['Pair'] == 'XAUUSD' else raw_signal['Pair'][3:]
-    prompt = f"""
-    Analyze this Wyckoff VSA setup:
-    Pair: {raw_signal['Pair']} ({raw_signal['Type']})
-    Logic: {raw_signal['Logic']}.
-    Are there any High Impact news events or current fundamental trends for {base} or {quote} today that support or oppose this trade?
-    Give a short expert verdict and Confidence Score out of 100%.
-    """
     try:
         response = ai_model.generate_content(prompt)
-        return {"Score": 90, "Reason": response.text[:280]} 
+        return {"Score": 90, "Reason": response.text[:300]} 
     except Exception as e:
         return {"Score": 0, "Reason": f"Error"}
 
-# --- 4. OUTPUT BLOCKS ---
+
+# --- 4. OUTPUT UI BLOCKS ---
 
 def show_sessions():
     pkt_tz = pytz.timezone('Asia/Karachi')
     now = datetime.now(pkt_tz)
-    st.subheader("🌍 Global Market Sessions (PKT)")
     if now.weekday() >= 5: 
         st.error("🛑 MARKET CLOSED (WEEKEND)")
         return
     cols = st.columns(4)
-    sessions = [{"name": "🇦🇺 Sydney", "open": 4, "close": 13}, {"name": "🇯🇵 Tokyo", "open": 5, "close": 14},
-                {"name": "🇬🇧 London", "open": 12, "close": 21}, {"name": "🇺🇸 New York", "open": 17, "close": 2}]
+    sessions = [{"name": "🇦🇺 AU Sydney", "open": 4, "close": 13}, {"name": "🇯🇵 JP Tokyo", "open": 5, "close": 14},
+                {"name": "🇬🇧 GB London", "open": 12, "close": 21}, {"name": "🇺🇸 US New York", "open": 17, "close": 2}]
     current_time_minutes = now.hour * 60 + now.minute
     for i, s in enumerate(sessions):
         open_mins = s["open"] * 60
@@ -215,73 +181,105 @@ def show_sessions():
 
 # --- 5. MAIN DASHBOARD ---
 
-forex_pairs = [
-    'EURUSD', 'GBPUSD', 'AUDUSD', 'NZDUSD', 'USDCAD', 'USDCHF', 'USDJPY',
-    'EURGBP', 'EURAUD', 'EURNZD', 'EURCAD', 'EURCHF', 'EURJPY',
-    'GBPAUD', 'GBPNZD', 'GBPCAD', 'GBPCHF', 'GBPJPY',
-    'AUDNZD', 'AUDCAD', 'AUDCHF', 'AUDJPY',
-    'NZDCAD', 'NZDCHF', 'NZDJPY',
-    'CADCHF', 'CADJPY', 'CHFJPY',
-    'XAUUSD' 
-]
-
+st.subheader("🌍 Global Market Sessions (PKT)")
 show_sessions()
 st.divider()
+
 col_left, col_right = st.columns([2.5, 1])
 
 with col_left:
     
+    # 1. Load Data silently in background like AlertBot
+    cot_df = load_cot_data()
+    oi_df = load_daily_oi()
+    df_fx = get_market_data()
     news_df, squawk_list = get_news_and_squawk() 
     
-    phase1_setups = []
-    ai_verified_setups = []
+    # 2. Render Live Engine Status UI
+    st.subheader("📡 Live Engine Status (AlertBot Scanner)")
     
-    st.subheader("📡 Live Engine Status (Wyckoff Scanner)")
-    with st.spinner('Scanning Market Pulse...'):
-        currency_strengths = get_all_currency_strengths() 
+    if not df_fx.empty:
+        currencies = ['USD', 'EUR', 'GBP', 'AUD', 'NZD', 'CAD', 'CHF', 'JPY', 'XAU']
+        cols = st.columns(len(currencies))
         
-        cols = st.columns(len(currency_strengths))
-        for i, (cur, data) in enumerate(currency_strengths.items()):
-            strength = data["status"]
-            if strength == "Strong":
-                bg_color = "#1a5c20"
-                icon = "🟢"
-            elif strength == "Weak":
-                bg_color = "#5c1a1a"
-                icon = "🔴"
+        for i, cur in enumerate(currencies):
+            cur_data = df_fx[df_fx['Instrument'] == cur]
+            if not cur_data.empty:
+                status = cur_data['Status'].values[0]
             else:
-                bg_color = "#2b2b2b"
-                icon = "⚪"
+                status = "Neutral"
+                
+            if status == "Strong":
+                bg_color = "#1a5c20"; icon = "🟢"
+            elif status == "Weak":
+                bg_color = "#5c1a1a"; icon = "🔴"
+            else:
+                bg_color = "#2b2b2b"; icon = "⚪"
                 
             cols[i].markdown(
                 f"<div style='text-align:center; padding:10px; margin-bottom:15px; border-radius:8px; background-color:{bg_color}; border:1px solid #444;'>"
                 f"<span style='font-size:12px; color:#ccc;'>{cur}</span><br>"
-                f"<b>{icon} {strength}</b></div>", 
+                f"<b>{icon} {status}</b></div>", 
                 unsafe_allow_html=True
             )
 
-    st.subheader("⚙️ Phase 1: Technical Setups (Dual-Leg)")
+    # 3. Match Setups using AlertBot Logic
+    phase1_setups = []
+    ai_verified_setups = []
     
-    for pair in forex_pairs:
-        raw_sig = check_pair_alignment(pair, currency_strengths) 
-        if raw_sig:
-            phase1_setups.append(raw_sig)
+    strong = df_fx[df_fx['Score'] >= 6]
+    weak = df_fx[df_fx['Score'] <= 4]
+    
+    for _, s in strong.iterrows():
+        for _, w in weak.iterrows():
+            c1, c2 = s['Instrument'], w['Instrument']
+            
+            # Check COT
+            cot_align = True
+            if not cot_df.empty:
+                s_sent = cot_df[cot_df['Instrument'].str.contains(c1, case=False)]['Direction'].values
+                if len(s_sent) > 0 and "Bearish" in s_sent[0]: cot_align = False
+            
+            # Check Daily OI
+            oi_align = True
+            if not oi_df.empty and 'Status' in oi_df.columns:
+                s_oi = oi_df[oi_df['Instrument'] == c1]['Status'].values
+                if len(s_oi) > 0 and "Decreasing" in s_oi[0]: oi_align = False
                 
+            # If All Aligned (COT + OI + Vol)
+            if cot_align and oi_align and ("✅" in s['Volume Confirm'] or "✅" in w['Volume Confirm']):
+                order = ['XAU', 'EUR', 'GBP', 'AUD', 'NZD', 'USD', 'CAD', 'CHF', 'JPY']
+                try:
+                    if order.index(c1) < order.index(c2): pair, action = f"{c1}{c2}", "BUY"
+                    else: pair, action = f"{c2}{c1}", "SELL"
+                    
+                    phase1_setups.append({
+                        "Pair": pair, 
+                        "Type": action, 
+                        "s_score": s['Score'], 
+                        "w_score": w['Score'],
+                        "Logic": f"Strength {s['Score']} vs {w['Score']} (COT/OI/Vol Aligned)"
+                    })
+                except: pass
+
+    # 4. Show Phase 1 Setups
+    st.subheader("⚙️ Phase 1: Technical Setups (Dual-Leg)")
     if phase1_setups:
         for sig in phase1_setups:
             color = "🟢" if sig['Type'] == "BUY" else "🔴"
             st.info(f"{color} **{sig['Type']} {sig['Pair']}** | 🏗️ {sig['Logic']}")
     else:
-        st.write("💤 Filhal Phase 1 mein koi Wyckoff Alignment nahi. Engine sirf specific Setups (Spring, Upthrust, Retest) ka wait kar raha hai.")
+        st.write("💤 Filhal Phase 1 mein koi AlertBot Alignment nahi. Waiting for Volume, COT & OI confirmation...")
 
     st.divider()
     
+    # 5. Show Phase 2 AI Verification
     st.subheader("🤖 Phase 2: AI Verified Setups (News Fundamentals)")
     
     if phase1_setups:
-        with st.spinner('AI is verifying News & Fundamentals...'):
+        with st.spinner('AI is verifying News & Fundamentals like AlertBot...'):
             for sig in phase1_setups:
-                ai_verification = verify_signal_with_ai(sig, news_df)
+                ai_verification = verify_signal_with_ai(sig['Type'], sig['Pair'], sig['s_score'], sig['w_score'], squawk_list)
                 if ai_verification and "Error" not in ai_verification['Reason']:
                     ai_verified_setups.append({"signal": sig, "ai": ai_verification})
         
@@ -290,16 +288,17 @@ with col_left:
                 sig = item['signal']
                 ai = item['ai']
                 color = "🟢" if sig['Type'] == "BUY" else "🔴"
-                with st.expander(f"{color} {sig['Type']} {sig['Pair']} - AI Score: {ai['Score']}%", expanded=True):
+                with st.expander(f"{color} {sig['Type']} {sig['Pair']} - AI Signal Ready", expanded=True):
                     st.write(f"🏗️ **System Check:** {sig['Logic']}")
                     st.success(f"🤖 **AI Verdict:** {ai['Reason']}")
-                    st.progress(ai['Score']/100)
         else:
-             st.warning("Phase 1 ke setups ko AI ne Fundamentally (News) reject kar diya hai.")
+             st.warning("Phase 1 ke setups ko AI ne News Risk ki wajah se reject kar diya hai.")
     else:
         st.write("Phase 1 mein koi setup nahi aaya is liye AI Verification pending hai.")
 
     st.divider()
+    
+    # 6. Scheduled News
     st.subheader("📅 Scheduled News (High Impact)")
     if not news_df.empty:
         html_table = "<table style='width:100%; text-align:left; font-size:14px; border-collapse: collapse;'>"
@@ -312,7 +311,6 @@ with col_left:
         st.markdown(html_table, unsafe_allow_html=True)
 
 with col_right:
-    # COT yahan se mukammal remove ho chuka hai
     st.subheader("⚡ Live Squawk")
     if squawk_list:
         for item in squawk_list:
@@ -330,10 +328,9 @@ if query and ai_model:
         The user is asking you: "{query}"
 
         STRICT RULES FOR YOUR RESPONSE:
-        1. Language: You MUST reply ONLY in Roman Urdu (Urdu written in English alphabets). DO NOT use Hindi, Devanagari script, or pure English.
-        2. Scope: Focus strictly on the Forex market (EUR, GBP, USD, JPY, AUD, NZD, CAD, CHF) and Gold (XAUUSD). 
-        3. Restrictions: Focus on Wyckoff VSA and News Fundamentals. DO NOT mention the Indian Stock Market, Crypto, or COT.
-        4. Tone: Keep the analysis professional, crisp, and to the point.
+        1. Language: You MUST reply ONLY in Roman Urdu (Urdu written in English alphabets).
+        2. Scope: Focus strictly on the Forex market and Gold (XAUUSD). 
+        3. Tone: Keep the analysis professional, crisp, and to the point.
         """
         with st.spinner("AI is analyzing the market..."):
             response = ai_model.generate_content(system_prompt)
