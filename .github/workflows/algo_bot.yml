@@ -5,6 +5,9 @@ on:
     - cron: '*/30 * * * *' # Har 30 minute baad chalega
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   run-bot:
     runs-on: ubuntu-latest
@@ -28,11 +31,11 @@ jobs:
           EMAIL_PASSWORD: ${{ secrets.EMAIL_PASSWORD }}
         run: python alertbot.py
 
-      # YEH WOH NAYA HISSA HAI JO MEMORY (ANTI-SPAM) KO SAVE RAKHEGA
       - name: Commit and Push sent alerts memory
         run: |
           git config --local user.email "action@github.com"
           git config --local user.name "GitHub Action"
+          touch sent_alerts.txt
           git add sent_alerts.txt
           git commit -m "Auto-update sent alerts memory" || echo "No new alerts to save"
           git push
