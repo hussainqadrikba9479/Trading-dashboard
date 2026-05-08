@@ -163,7 +163,6 @@ def run_bot():
     currency_strengths = get_all_currency_strengths()
     live_news = get_live_squawk()
     
-    # Major pairs to monitor
     forex_pairs = [
         'EURUSD', 'GBPUSD', 'AUDUSD', 'NZDUSD', 'USDCAD', 'USDCHF', 'USDJPY', 
         'EURJPY', 'GBPJPY', 'AUDJPY', 'XAUUSD'
@@ -183,7 +182,6 @@ def run_bot():
                 
                 if "Error" not in verdict and "Offline" not in verdict:
                     now_pkt = datetime.now(pytz.timezone('Asia/Karachi'))
-                    # Setup Format for Auto-Execution Bot reading
                     email_subject = f"Setup: {action} {pair}"
                     email_body = f"Hussain Algo Terminal (24/7 Background Watchdog)\n\nSetup: {action} {pair}\nLogic: {logic}\n\n🤖 AI Verdict:\n{verdict}\n\nTime: {now_pkt.strftime('%I:%M %p')} (PKT)"
                     
@@ -198,14 +196,19 @@ def run_bot():
 
 if __name__ == "__main__":
     run_bot()
+File 2: .yml File (GitHub Actions Workflow)
+Jo file aap ke .github/workflows/ folder ke andar mojood hai (algo_bot.yml ya jo bhi aap ne naam rakha hai), us ka purana code mita kar sirf yeh code paste karein, aur Commit changes kar dein:
 
 YAML
 name: Algo Trading Bot Auto-Run
 
 on:
   schedule:
-    - cron: '*/30 * * * *' # Har 30 minute baad chalega
+    - cron: '*/30 * * * *'
   workflow_dispatch:
+
+permissions:
+  contents: write
 
 jobs:
   run-bot:
@@ -221,20 +224,20 @@ jobs:
 
       - name: Install Dependencies
         run: |
-          pip install yfinance pandas requests google-generativeai pytz
+          pip install yfinance pandas requests google-generativeai pytz openpyxl
 
       - name: Run AlertBot
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           EMAIL_SENDER: ${{ secrets.EMAIL_SENDER }}
           EMAIL_PASSWORD: ${{ secrets.EMAIL_PASSWORD }}
-        run: python alertbot.py
+        run: python alert_bot.py
 
-      # YEH NAYA HISSA HAI JO FILE KO SAVE RAKHEGA
       - name: Commit and Push sent alerts memory
         run: |
           git config --local user.email "action@github.com"
           git config --local user.name "GitHub Action"
+          touch sent_alerts.txt
           git add sent_alerts.txt
           git commit -m "Auto-update sent alerts memory" || echo "No new alerts to save"
           git push
