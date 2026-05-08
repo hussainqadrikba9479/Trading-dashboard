@@ -1,32 +1,38 @@
-name: 24/7 Hussain Algo Bot
+name: Algo Trading Bot Auto-Run
 
 on:
   schedule:
-    - cron: '*/30 * * * *'  # Har 30 minute baad chalega
-  workflow_dispatch:        # Button daba kar manual test karne ke liye
+    - cron: '*/30 * * * *' # Har 30 minute baad chalega
+  workflow_dispatch:
 
 jobs:
   run-bot:
     runs-on: ubuntu-latest
-
     steps:
-    - name: Checkout Repository
-      uses: actions/checkout@v3
+      - name: Checkout Repository
+        uses: actions/checkout@v3
 
-    - name: Set up Python
-      uses: actions/setup-python@v4
-      with:
-        python-version: '3.10'
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
 
-    - name: Install Requirements
-      run: |
-        python -m pip install --upgrade pip
-        pip install pandas yfinance openpyxl google-generativeai requests
+      - name: Install Dependencies
+        run: |
+          pip install yfinance pandas requests google-generativeai pytz openpyxl
 
-    - name: Run Alert Bot
-      env:
-        GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-        EMAIL_SENDER: ${{ secrets.EMAIL_SENDER }}
-        EMAIL_PASSWORD: ${{ secrets.EMAIL_PASSWORD }}
-        EMAIL_RECEIVER: ${{ secrets.EMAIL_SENDER }}
-      run: python alert_bot.py
+      - name: Run AlertBot
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          EMAIL_SENDER: ${{ secrets.EMAIL_SENDER }}
+          EMAIL_PASSWORD: ${{ secrets.EMAIL_PASSWORD }}
+        run: python alertbot.py
+
+      # YEH WOH NAYA HISSA HAI JO MEMORY (ANTI-SPAM) KO SAVE RAKHEGA
+      - name: Commit and Push sent alerts memory
+        run: |
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+          git add sent_alerts.txt
+          git commit -m "Auto-update sent alerts memory" || echo "No new alerts to save"
+          git push
