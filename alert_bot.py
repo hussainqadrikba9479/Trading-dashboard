@@ -198,10 +198,6 @@ def run_bot():
 
 if __name__ == "__main__":
     run_bot()
-Step 2: GitHub Action File Update (.yml)
-Yeh sab se zaroori step hai. Kyunke GitHub jab code chala kar us mein sent_alerts.txt banayega, toh usay wapis save (commit) bhi karna hai, warna wo har bar naya samjhega.
-
-Apne GitHub repo mein .github/workflows/ folder ke andar jo .yml file hai (jis mein cron job / timer set hai), usay edit karein aur sab se aakhir mein "Commit and push changes" wala step add kar dein. Aap ka YAML code kuch is tarah ka dikhna chahiye:
 
 YAML
 name: Algo Trading Bot Auto-Run
