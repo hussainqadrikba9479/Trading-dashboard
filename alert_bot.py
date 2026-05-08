@@ -7,9 +7,28 @@ import os
 import xml.etree.ElementTree as ET
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timedelta
+import pytz
 
-# --- EMAIL ALERT FUNCTION ---
+# ==========================================
+# 1. ANTI-SPAM MEMORY ENGINE
+# ==========================================
+MEMORY_FILE = "sent_alerts.txt"
+
+def is_already_sent(pair, action):
+    if not os.path.exists(MEMORY_FILE):
+        return False
+    date_str = datetime.now(pytz.timezone('Asia/Karachi')).strftime('%Y-%m-%d')
+    record = f"{date_str}_{action}_{pair}"
+    with open(MEMORY_FILE, "r") as f:
+        return record in f.read().splitlines()
+
+def mark_as_sent(pair, action):
+    date_str = datetime.now(pytz.timezone('Asia/Karachi')).strftime('%Y-%m-%d')
+    record = f"{date_str}_{action}_{pair}\n"
+    with open(MEMORY_FILE, "a") as f:
+        f.write(record)
+
 def send_email_alert(subject, body):
     sender_email = os.environ.get("EMAIL_SENDER")
     sender_password = os.environ.get("EMAIL_PASSWORD")
@@ -28,140 +47,198 @@ def send_email_alert(subject, body):
         server.send_message(msg)
         server.quit()
         print("✅ Alert Email Sent Successfully!")
+        return True
     except Exception as e:
         print(f"❌ Email Error: {e}")
+        return False
 
-# =========================================================================
-# --- SAME BACKEND DATA FUNCTIONS (Identical to Dashboard) ---
-# =========================================================================
-def load_cot_data():
-    try:
-        df_cot = pd.read_excel("COT.xlsm", sheet_name="Main", engine='openpyxl', usecols="A,B,G,K,P", skiprows=2, header=None)
-        df_cot.columns = ['Instrument', 'Net Change', 'Direction', 'COT Index', 'OI Change']
-        return df_cot.dropna(subset=['Instrument'])
-    except: return pd.DataFrame()
-
-def load_daily_oi():
-    try:
-        df = pd.read_excel("Daily_OI.xlsm", sheet_name="Data", engine='openpyxl')
-        df.columns = df.columns.astype(str).str.replace('\n', ' ').str.replace('\r', '')
-        col_map = {'USD': 'USD', 'Euro': 'EUR', 'Pound': 'GBP', 'Australian': 'AUD', 'Zealand': 'NZD', 'Canadian': 'CAD', 'Swiss': 'CHF', 'Yen': 'JPY', 'Gold': 'GOLD'}
-        oi_list = []
-        for keyword, symbol in col_map.items():
-            matched_col = next((col for col in df.columns if keyword.lower() in col.lower()), None)
-            if matched_col:
-                valid_data = pd.to_numeric(df[matched_col], errors='coerce').dropna().values
-                if len(valid_data) >= 2:
-                    curr_oi, prev_oi = valid_data[0], valid_data[1]
-                    change = curr_oi - prev_oi
-                    status = "Increasing 🟢" if change > 0 else "Decreasing 🔴"
-                    oi_list.append({'Instrument': symbol, 'Current OI': int(curr_oi), 'Status': status})
-        return pd.DataFrame(oi_list)
-    except: return pd.DataFrame()
-
-def get_market_data(mode):
-    data_list = []
-    symbols = {'USD': 'DX-Y.NYB', 'GOLD': 'GC=F', 'EUR': '6E=F', 'GBP': '6B=F', 'JPY': '6J=F', 'AUD': '6A=F', 'CAD': '6C=F', 'CHF': '6S=F'}
-    interval = "1h" if "Swing" in mode else "30m"
-    for name, ticker in symbols.items():
+# ==========================================
+# 2. MARKET DATA ENGINE (Wyckoff VSA Only)
+# ==========================================
+def get_all_currency_strengths():
+    currencies = ['USD', 'EUR', 'GBP', 'AUD', 'NZD', 'CAD', 'CHF', 'JPY', 'XAU']
+    strengths = {}
+    tickers = {
+        'USD': 'DX-Y.NYB', 'EUR': 'EURUSD=X', 'GBP': 'GBPUSD=X',
+        'AUD': 'AUDUSD=X', 'NZD': 'NZDUSD=X', 'CAD': 'USDCAD=X',
+        'CHF': 'USDCHF=X', 'JPY': 'USDJPY=X', 'XAU': 'GC=F'
+    }
+    inverted = ['CAD', 'CHF', 'JPY']
+    
+    for curr in currencies:
         try:
-            df = yf.download(ticker, period="1mo", interval=interval, progress=False)
-            if isinstance(df.columns, pd.MultiIndex): df.columns = df.columns.droplevel(1)
-            close, sma = df['Close'].iloc[-1], df['Close'].rolling(20).mean().iloc[-1]
-            vol, avg_vol = df['Volume'].iloc[-1], df['Volume'].rolling(20).mean().iloc[-1]
-            score = 5
-            if close > sma: score = 7 if close > df['High'].iloc[-5] else 6
-            else: score = 3 if close < df['Low'].iloc[-5] else 4
-            vol_confirm = "✅ Vol Confirmed" if vol > avg_vol else "No Volume Confirm"
-            data_list.append({'Instrument': name, 'Structure': 'Uptrend' if close > sma else 'Downtrend', 'PA Signal': 'Buy Pullback' if score >= 6 else 'Sell Pullback' if score <= 4 else 'Neutral', 'Volume Confirm': vol_confirm, 'Score': score})
-        except: pass
-    return pd.DataFrame(data_list)
+            ticker = yf.Ticker(tickers[curr])
+            df = ticker.history(period="5d", interval="1h")
+            if df.empty or len(df) < 25: 
+                strengths[curr] = {"status": "Neutral", "reason": "Not Enough Data"}
+                continue
+            
+            # Volume & Structure Analysis
+            prev_high = df['High'].rolling(20).max().shift(1).iloc[-1]
+            prev_low = df['Low'].rolling(20).min().shift(1).iloc[-1]
+            avg_vol = df['Volume'].rolling(20).mean().shift(1).iloc[-1]
+            
+            curr_close = df['Close'].iloc[-1]
+            curr_high = df['High'].iloc[-1]
+            curr_low = df['Low'].iloc[-1]
+            curr_vol = df['Volume'].iloc[-1]
+            prev_close = df['Close'].iloc[-2]
+            
+            is_high_vol = curr_vol > (avg_vol * 1.3) if avg_vol > 0 else False
+            
+            is_spring = (curr_low < prev_low) and (curr_close > prev_low) and is_high_vol
+            is_upthrust = (curr_high > prev_high) and (curr_close < prev_high) and is_high_vol
+            recent_bo_up = (df['Close'].iloc[-5:-1] > df['High'].rolling(20).max().shift(1).iloc[-5:-1]).any()
+            is_retest_buy = recent_bo_up and (curr_close < prev_close) and (curr_close > prev_low)
+            recent_bo_down = (df['Close'].iloc[-5:-1] < df['Low'].rolling(20).min().shift(1).iloc[-5:-1]).any()
+            is_retest_sell = recent_bo_down and (curr_close > prev_close) and (curr_close < prev_high)
+            
+            status = "Neutral"
+            reason = "Ranging / No Setup"
+            
+            if is_spring: status, reason = "Strong", "Spring / Shakeout (Support Rejection)"
+            elif is_upthrust: status, reason = "Weak", "Upthrust (Resistance Rejection)"
+            elif is_retest_buy: status, reason = "Strong", "Trend Continuation (Pullback Retest)"
+            elif is_retest_sell: status, reason = "Weak", "Downtrend Continuation (Pullback Retest)"
+
+            if curr in inverted:
+                if status == "Strong": status, reason = "Weak", reason.replace("Strong", "Weak")
+                elif status == "Weak": status, reason = "Strong", reason.replace("Weak", "Strong")
+                    
+            strengths[curr] = {"status": status, "reason": reason}
+        except:
+            strengths[curr] = {"status": "Neutral", "reason": "Error"}
+    return strengths
+
+def check_pair_alignment(pair, strengths_dict):
+    base = 'XAU' if pair == 'XAUUSD' else pair[:3]
+    quote = 'USD' if pair == 'XAUUSD' else pair[3:]
+    base_data = strengths_dict.get(base, {"status": "Neutral"})
+    quote_data = strengths_dict.get(quote, {"status": "Neutral"})
+    
+    if base_data["status"] == "Strong" and quote_data["status"] == "Weak":
+        return {"Pair": pair, "Type": "BUY", "Logic": f"Base [{base_data['reason']}] + Quote [{quote_data['reason']}]"}
+    elif base_data["status"] == "Weak" and quote_data["status"] == "Strong":
+        return {"Pair": pair, "Type": "SELL", "Logic": f"Base [{base_data['reason']}] + Quote [{quote_data['reason']}]"}
+    return None
 
 def get_live_squawk():
+    squawk = []
     try:
         r = requests.get("https://www.forexlive.com/feed", headers={'User-Agent': 'Mozilla/5.0'}, timeout=10)
         root = ET.fromstring(r.content)
-        return [{'title': i.find('title').text} for i in root.findall('.//item')[:5]]
-    except: return []
+        for i, item in enumerate(root.findall('.//item')):
+            if i >= 5: break
+            squawk.append({'Headline': item.find('title').text})
+    except: pass
+    return squawk
 
-# --- MAIN BOT LOGIC ---
+# ==========================================
+# 3. AI VERIFICATION ENGINE
+# ==========================================
+def verify_signal_with_ai(ai_model, action, pair, logic, squawk_list):
+    if not ai_model: return "⚠️ AI Offline"
+    news_str = "\n".join([n['Headline'] for n in squawk_list]) if squawk_list else "No major news"
+    prompt = f"Expert Analyst: {action} setup on {pair}. Logic: {logic}. Live News: {news_str}. Batao yeh trade safe hai ya news risk? (Roman Urdu, 2 lines max)"
+    try:
+        response = ai_model.generate_content(prompt)
+        return response.text
+    except: return "⚠️ AI Error"
+
+# ==========================================
+# 4. MAIN EXECUTION LOOP
+# ==========================================
 def run_bot():
-    print("🔄 Starting 30-Min Market Scan...")
+    print("🔄 Starting Auto-Scan (GitHub Actions)...")
     
-   # Initialize AI
     api_key = os.environ.get("GEMINI_API_KEY")
     ai_model = None
     if api_key:
-        try:
-            genai.configure(api_key=api_key)
-            available_models = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
-            best_model = available_models[0]
-            ai_model = genai.GenerativeModel(best_model)
-        except Exception as e:
-            print(f"AI Initialization Error: {e}")
-    # Load Data (Same as Dashboard)
-    trading_mode = "Swing Trading (D1 + H4)" # Aap ka selected mode
-    cot_df = load_cot_data()
-    oi_df = load_daily_oi()
-    df_fx = get_market_data(trading_mode)
+        genai.configure(api_key=api_key)
+        for m in genai.list_models():
+            if 'generateContent' in m.supported_generation_methods and 'gemini' in m.name.lower():
+                ai_model = genai.GenerativeModel(m.name.replace('models/', ''))
+                break
+    
+    currency_strengths = get_all_currency_strengths()
     live_news = get_live_squawk()
-
-    strong = df_fx[df_fx['Score'] >= 6]
-    weak = df_fx[df_fx['Score'] <= 4]
+    
+    # Major pairs to monitor
+    forex_pairs = [
+        'EURUSD', 'GBPUSD', 'AUDUSD', 'NZDUSD', 'USDCAD', 'USDCHF', 'USDJPY', 
+        'EURJPY', 'GBPJPY', 'AUDJPY', 'XAUUSD'
+    ]
+    
     found_setup = False
-
-    if not strong.empty and not weak.empty:
-        for _, s in strong.iterrows():
-            for _, w in weak.iterrows():
-                c1, c2 = s['Instrument'], w['Instrument']
+    for pair in forex_pairs:
+        raw_sig = check_pair_alignment(pair, currency_strengths)
+        if raw_sig:
+            action, logic = raw_sig['Type'], raw_sig['Logic']
+            print(f"🏗️ Phase 1 Technical Setup Match: {action} {pair}")
+            
+            # Memory Check (Anti-Spam)
+            if not is_already_sent(pair, action):
+                print("🤖 Verifying with AI Phase 2...")
+                verdict = verify_signal_with_ai(ai_model, action, pair, logic, live_news)
                 
-                # Check COT
-                cot_align = True
-                if not cot_df.empty:
-                    s_sent = cot_df[cot_df['Instrument'].str.contains(c1, case=False)]['Direction'].values
-                    if len(s_sent) > 0 and "Bearish" in s_sent[0]: cot_align = False
-                
-                # Check Daily OI
-                oi_align = True
-                if not oi_df.empty and 'Status' in oi_df.columns:
-                    s_oi = oi_df[oi_df['Instrument'] == c1]['Status'].values
-                    if len(s_oi) > 0 and "Decreasing" in s_oi[0]: oi_align = False
-                
-                # If All Aligned (Strict Rules matched!)
-                if cot_align and oi_align and ("✅" in s['Volume Confirm'] or "✅" in w['Volume Confirm']):
-                    order = ['GOLD', 'EUR', 'GBP', 'AUD', 'NZD', 'USD', 'CAD', 'CHF', 'JPY']
-                    try:
-                        if order.index(c1) < order.index(c2): pair, action = f"{c1}{c2}", "BUY"
-                        else: pair, action = f"{c2}{c1}", "SELL"
-                        
-                        print(f"🔥 Setup Detected: {action} {pair}")
-                        
-                        # AI Verification
-                        verdict = "⚠️ AI verification offline."
-                        if ai_model:
-                            print("🤖 AI Verifying...")
-                            news_str = "\n".join([n['title'] for n in live_news]) if live_news else "No major news"
-                            prompt = f"Expert Analyst: {action} setup on {pair}. Strength {s['Score']} vs {w['Score']}. COT/Vol/OI Aligned. Live News: {news_str}. Batao yeh trade safe hai ya news risk? (Roman Urdu, 2 lines max)"
-                            response = ai_model.generate_content(prompt)
-                            verdict = response.text
-                        
-                        # Time formatting
-                        pkt_timezone = timezone(timedelta(hours=5))
-                        now_pkt = datetime.now(pkt_timezone)
-                        
-                        # Send Email
-                        email_subject = f"🚨 AI Setup Alert: {action} {pair}"
-                        email_body = f"Hussain Algo Terminal (24/7 Watchdog)\n\nSetup: {action} {pair}\nStrength: {s['Score']} vs {w['Score']}\n\n🤖 AI Verdict:\n{verdict}\n\nTime: {now_pkt.strftime('%I:%M %p')} (PKT)\nMode: {trading_mode}"
-                        
-                        send_email_alert(email_subject, email_body)
+                if "Error" not in verdict and "Offline" not in verdict:
+                    now_pkt = datetime.now(pytz.timezone('Asia/Karachi'))
+                    # Setup Format for Auto-Execution Bot reading
+                    email_subject = f"Setup: {action} {pair}"
+                    email_body = f"Hussain Algo Terminal (24/7 Background Watchdog)\n\nSetup: {action} {pair}\nLogic: {logic}\n\n🤖 AI Verdict:\n{verdict}\n\nTime: {now_pkt.strftime('%I:%M %p')} (PKT)"
+                    
+                    if send_email_alert(email_subject, email_body):
+                        mark_as_sent(pair, action)
                         found_setup = True
-                    except Exception as e:
-                        print(f"Error processing {c1}{c2}: {e}")
+            else:
+                print(f"⏭️ {action} {pair} alert already sent today. Skipping to avoid spam.")
 
     if not found_setup:
-        print("💤 No active institutional setup found right now. Sleeping till next cycle.")
+        print("💤 No new unique setups found in this cycle.")
 
 if __name__ == "__main__":
-    print("📧 Sending Manual Test Email...")
-    send_email_alert("🚀 Hussain Algo: Connection Test", "Alhamdulillah! Aap ka 24/7 Bot ab emails bhej raha hai aur AI verification bhi theek kaam kar rahi hai.")
     run_bot()
+Step 2: GitHub Action File Update (.yml)
+Yeh sab se zaroori step hai. Kyunke GitHub jab code chala kar us mein sent_alerts.txt banayega, toh usay wapis save (commit) bhi karna hai, warna wo har bar naya samjhega.
+
+Apne GitHub repo mein .github/workflows/ folder ke andar jo .yml file hai (jis mein cron job / timer set hai), usay edit karein aur sab se aakhir mein "Commit and push changes" wala step add kar dein. Aap ka YAML code kuch is tarah ka dikhna chahiye:
+
+YAML
+name: Algo Trading Bot Auto-Run
+
+on:
+  schedule:
+    - cron: '*/30 * * * *' # Har 30 minute baad chalega
+  workflow_dispatch:
+
+jobs:
+  run-bot:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+
+      - name: Install Dependencies
+        run: |
+          pip install yfinance pandas requests google-generativeai pytz
+
+      - name: Run AlertBot
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          EMAIL_SENDER: ${{ secrets.EMAIL_SENDER }}
+          EMAIL_PASSWORD: ${{ secrets.EMAIL_PASSWORD }}
+        run: python alertbot.py
+
+      # YEH NAYA HISSA HAI JO FILE KO SAVE RAKHEGA
+      - name: Commit and Push sent alerts memory
+        run: |
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+          git add sent_alerts.txt
+          git commit -m "Auto-update sent alerts memory" || echo "No new alerts to save"
+          git push
