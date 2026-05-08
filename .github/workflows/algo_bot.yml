@@ -5,6 +5,7 @@ on:
     - cron: '*/30 * * * *' # Har 30 minute baad chalega
   workflow_dispatch:
 
+# 1. YEH PERMISSION ZAROORI HAI FILE SAVE KARNE KE LIYE
 permissions:
   contents: write
 
@@ -22,19 +23,21 @@ jobs:
 
       - name: Install Dependencies
         run: |
-          pip install yfinance pandas requests google-generativeai pytz openpyxl
+          pip install yfinance pandas requests google-generativeai pytz
 
       - name: Run AlertBot
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           EMAIL_SENDER: ${{ secrets.EMAIL_SENDER }}
           EMAIL_PASSWORD: ${{ secrets.EMAIL_PASSWORD }}
+        # 2. FILE KE NAAM MEIN UNDERSCORE CHECK KAREIN (Agar alertbot.py hai toh wohi rehne dein)
         run: python alert_bot.py
 
       - name: Commit and Push sent alerts memory
         run: |
           git config --local user.email "action@github.com"
           git config --local user.name "GitHub Action"
+          # 3. TOUCH COMMAND ZAROORI HAI ERROR SE BACHNE KE LIYE
           touch sent_alerts.txt
           git add sent_alerts.txt
           git commit -m "Auto-update sent alerts memory" || echo "No new alerts to save"
