@@ -7,12 +7,21 @@ import xml.etree.ElementTree as ET
 from datetime import datetime
 import pytz
 from email.utils import parsedate_to_datetime
+import smtplib
+import os
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
+import threading
+import time
 
-# --- 1. CONFIGURATION & PAGE SETUP ---
-st.set_page_config(page_title="Hussain Algo Terminal V17 (AlertBot Engine)", page_icon="⚡", layout="wide")
+# ==========================================
+# 1. CONFIGURATION & PAGE SETUP
+# ==========================================
+st.set_page_config(page_title="Hussain Algo Terminal V17 (Master Engine)", page_icon="⚡", layout="wide")
 
 try:
-    api_key = st.secrets["GEMINI_API_KEY"]
+    # VPS par secrets run karne ke liye hum st.secrets use karenge
+    api_key = st.secrets["GEMINI_API_KEY"] if "GEMINI_API_KEY" in st.secrets else os.environ.get("GEMINI_API_KEY")
     genai.configure(api_key=api_key)
     
     working_model = None
@@ -25,8 +34,194 @@ try:
     else: ai_model = None
 except Exception as e: ai_model = None
 
-# --- 2. ALERTBOT DATA ENGINES (COT, OI, MARKETS) ---
+# ==========================================
+# 2. ANTI-SPAM & EMAIL ENGINE
+# ==========================================
+MEMORY_FILE = "sent_alerts.txt"
 
+def is_already_sent(pair, action):
+    if not os.path.exists(MEMORY_FILE):
+        return False
+    date_str = datetime.now(pytz.timezone('Asia/Karachi')).strftime('%Y-%m-%d')
+    record = f"{date_str}_{action}_{pair}"
+    with open(MEMORY_FILE, "r") as f:
+        return record in f.read().splitlines()
+
+def mark_as_sent(pair, action):
+    date_str = datetime.now(pytz.timezone('Asia/Karachi')).strftime('%Y-%m-%d')
+    record = f"{date_str}_{action}_{pair}\n"
+    with open(MEMORY_FILE, "a") as f:
+        f.write(record)
+
+def send_email_alert(subject, body):
+    # Email credentials Streamlit secrets se le ga
+    try:
+        sender_email = st.secrets["EMAIL_SENDER"]
+        sender_password = st.secrets["EMAIL_PASSWORD"]
+        receiver_email = st.secrets.get("EMAIL_RECEIVER", sender_email)
+    except:
+        sender_email = os.environ.get("EMAIL_SENDER")
+        sender_password = os.environ.get("EMAIL_PASSWORD")
+        receiver_email = os.environ.get("EMAIL_RECEIVER", sender_email)
+    
+    try:
+        msg = MIMEMultipart()
+        msg['From'] = sender_email
+        msg['To'] = receiver_email
+        msg['Subject'] = subject
+        msg.attach(MIMEText(body, 'plain'))
+        
+        server = smtplib.SMTP('smtp.gmail.com', 587)
+        server.starttls()
+        server.login(sender_email, sender_password)
+        server.send_message(msg)
+        server.quit()
+        print(f"✅ Alert Email Sent Successfully! Subject: {subject}")
+        return True
+    except Exception as e:
+        print(f"❌ Email Error: {e}")
+        return False
+
+# ==========================================
+# 3. BACKGROUND ALERT BOT ENGINE
+# ==========================================
+def get_all_currency_strengths():
+    currencies = ['USD', 'EUR', 'GBP', 'AUD', 'NZD', 'CAD', 'CHF', 'JPY', 'XAU']
+    strengths = {}
+    tickers = {
+        'USD': 'DX-Y.NYB', 'EUR': 'EURUSD=X', 'GBP': 'GBPUSD=X',
+        'AUD': 'AUDUSD=X', 'NZD': 'NZDUSD=X', 'CAD': 'USDCAD=X',
+        'CHF': 'USDCHF=X', 'JPY': 'USDJPY=X', 'XAU': 'GC=F'
+    }
+    inverted = ['CAD', 'CHF', 'JPY']
+    
+    for curr in currencies:
+        try:
+            ticker = yf.Ticker(tickers[curr])
+            df = ticker.history(period="5d", interval="1h")
+            if df.empty or len(df) < 25: 
+                strengths[curr] = {"status": "Neutral", "reason": "Not Enough Data"}
+                continue
+            
+            # Volume & Structure Analysis (Wyckoff)
+            prev_high = df['High'].rolling(20).max().shift(1).iloc[-1]
+            prev_low = df['Low'].rolling(20).min().shift(1).iloc[-1]
+            avg_vol = df['Volume'].rolling(20).mean().shift(1).iloc[-1]
+            
+            curr_close = df['Close'].iloc[-1]
+            curr_high = df['High'].iloc[-1]
+            curr_low = df['Low'].iloc[-1]
+            curr_vol = df['Volume'].iloc[-1]
+            prev_close = df['Close'].iloc[-2]
+            
+            is_high_vol = curr_vol > (avg_vol * 1.3) if avg_vol > 0 else False
+            
+            is_spring = (curr_low < prev_low) and (curr_close > prev_low) and is_high_vol
+            is_upthrust = (curr_high > prev_high) and (curr_close < prev_high) and is_high_vol
+            recent_bo_up = (df['Close'].iloc[-5:-1] > df['High'].rolling(20).max().shift(1).iloc[-5:-1]).any()
+            is_retest_buy = recent_bo_up and (curr_close < prev_close) and (curr_close > prev_low)
+            recent_bo_down = (df['Close'].iloc[-5:-1] < df['Low'].rolling(20).min().shift(1).iloc[-5:-1]).any()
+            is_retest_sell = recent_bo_down and (curr_close > prev_close) and (curr_close < prev_high)
+            
+            status = "Neutral"
+            reason = "Ranging / No Setup"
+            
+            if is_spring: status, reason = "Strong", "Spring / Shakeout (Support Rejection)"
+            elif is_upthrust: status, reason = "Weak", "Upthrust (Resistance Rejection)"
+            elif is_retest_buy: status, reason = "Strong", "Trend Continuation (Pullback Retest)"
+            elif is_retest_sell: status, reason = "Weak", "Downtrend Continuation (Pullback Retest)"
+
+            if curr in inverted:
+                if status == "Strong": status, reason = "Weak", reason.replace("Strong", "Weak")
+                elif status == "Weak": status, reason = "Strong", reason.replace("Weak", "Strong")
+                    
+            strengths[curr] = {"status": status, "reason": reason}
+        except:
+            strengths[curr] = {"status": "Neutral", "reason": "Error"}
+    return strengths
+
+def check_pair_alignment(pair, strengths_dict):
+    base = 'XAU' if pair == 'XAUUSD' else pair[:3]
+    quote = 'USD' if pair == 'XAUUSD' else pair[3:]
+    base_data = strengths_dict.get(base, {"status": "Neutral"})
+    quote_data = strengths_dict.get(quote, {"status": "Neutral"})
+    
+    if base_data["status"] == "Strong" and quote_data["status"] == "Weak":
+        return {"Pair": pair, "Type": "BUY", "Logic": f"Base [{base_data['reason']}] + Quote [{quote_data['reason']}]"}
+    elif base_data["status"] == "Weak" and quote_data["status"] == "Strong":
+        return {"Pair": pair, "Type": "SELL", "Logic": f"Base [{base_data['reason']}] + Quote [{quote_data['reason']}]"}
+    return None
+
+def verify_signal_with_ai(ai_model, action, pair, logic, squawk_list):
+    if not ai_model: return "⚠️ AI Offline"
+    news_str = "\n".join([n['Headline'] for n in squawk_list]) if squawk_list else "No major news"
+    prompt = f"Expert Analyst: {action} setup on {pair}. Logic: {logic}. Live News: {news_str}. Batao yeh trade safe hai ya news risk? (Roman Urdu, 2 lines max)"
+    try:
+        response = ai_model.generate_content(prompt)
+        return response.text
+    except: return "⚠️ AI Error"
+
+def run_bot():
+    print("🔄 Alert Bot is Scanning Market...")
+    now_pkt = datetime.now(pytz.timezone('Asia/Karachi'))
+
+    if not is_already_sent("TEST", "WELCOME_EMAIL"):
+        welcome_sub = "✅ Hussain Algo: Bot is Active (Daily Test)"
+        welcome_body = f"Bhai!\n\nAap ka 24/7 Algo Trading Bot background mein bilkul theek chal raha hai. Yeh aaj ka daily test message hai.\n\nTime: {now_pkt.strftime('%I:%M %p')} (PKT)\n\nSystem abhi market (Wyckoff VSA + AI News) ko monitor kar raha hai. Jaise hi koi achha setup milega, aap ko fauran email mil jayegi.\n\nHappy Trading!"
+        
+        print("📧 Sending Daily Welcome/Test Email...")
+        if send_email_alert(welcome_sub, welcome_body):
+            mark_as_sent("TEST", "WELCOME_EMAIL")
+
+    currency_strengths = get_all_currency_strengths()
+    live_news, squawk_list = get_news_and_squawk() # Dashboard function reuse
+    
+    forex_pairs = ['EURUSD', 'GBPUSD', 'AUDUSD', 'NZDUSD', 'USDCAD', 'USDCHF', 'USDJPY', 'EURJPY', 'GBPJPY', 'AUDJPY', 'XAUUSD']
+    
+    found_setup = False
+    for pair in forex_pairs:
+        raw_sig = check_pair_alignment(pair, currency_strengths)
+        if raw_sig:
+            action, logic = raw_sig['Type'], raw_sig['Logic']
+            print(f"🏗️ Phase 1 Technical Setup Match: {action} {pair}")
+            
+            if not is_already_sent(pair, action):
+                print("🤖 Verifying with AI Phase 2...")
+                verdict = verify_signal_with_ai(ai_model, action, pair, logic, squawk_list)
+                
+                if "Error" not in verdict and "Offline" not in verdict:
+                    email_subject = f"Setup: {action} {pair}"
+                    email_body = f"Hussain Algo Terminal (24/7 Background Watchdog)\n\nSetup: {action} {pair}\nLogic: {logic}\n\n🤖 AI Verdict:\n{verdict}\n\nTime: {datetime.now(pytz.timezone('Asia/Karachi')).strftime('%I:%M %p')} (PKT)"
+                    
+                    if send_email_alert(email_subject, email_body):
+                        mark_as_sent(pair, action)
+                        found_setup = True
+            else:
+                print(f"⏭️ {action} {pair} alert already sent today. Skipping to avoid spam.")
+
+    if not found_setup:
+        print("💤 No new unique setups found in this cycle.")
+
+# THREADING: Run bot in background continuously
+@st.cache_resource
+def start_background_bot():
+    def alert_loop():
+        while True:
+            try:
+                run_bot()
+            except Exception as e:
+                print(f"Bot Loop Error: {e}")
+            time.sleep(1800) # Har 30 Minute baad scan karega (1800 seconds)
+            
+    thread = threading.Thread(target=alert_loop, daemon=True)
+    thread.start()
+    return thread
+
+start_background_bot()
+
+# ==========================================
+# 4. DASHBOARD DATA ENGINES
+# ==========================================
 @st.cache_data(ttl=3600)
 def load_cot_data():
     try:
@@ -57,9 +252,8 @@ def load_daily_oi():
 @st.cache_data(ttl=300)
 def get_market_data():
     data_list = []
-    # UI aur Dashboard dono jagah GOLD ko XAU rakha hai taake sync rahay
     symbols = {'USD': 'DX-Y.NYB', 'XAU': 'GC=F', 'EUR': '6E=F', 'GBP': '6B=F', 'JPY': '6J=F', 'AUD': '6A=F', 'CAD': '6C=F', 'CHF': '6S=F', 'NZD': '6N=F'}
-    interval = "1h" # Swing Trading D1 + H4
+    interval = "1h" 
     
     for name, ticker in symbols.items():
         try:
@@ -78,12 +272,7 @@ def get_market_data():
             vol_confirm = "✅" if vol > avg_vol else "❌"
             status = "Strong" if score >= 6 else "Weak" if score <= 4 else "Neutral"
             
-            data_list.append({
-                'Instrument': name, 
-                'Score': score, 
-                'Status': status,
-                'Volume Confirm': vol_confirm
-            })
+            data_list.append({'Instrument': name, 'Score': score, 'Status': status, 'Volume Confirm': vol_confirm})
         except: 
             data_list.append({'Instrument': name, 'Score': 5, 'Status': 'Neutral', 'Volume Confirm': 'Error'})
             
@@ -138,23 +327,9 @@ def get_news_and_squawk():
     except: pass
     return pd.DataFrame(news), squawk
 
-# --- 3. TRADE MATCHING LOGIC (Same as AlertBot) ---
-
-def verify_signal_with_ai(action, pair, s_score, w_score, squawk_list):
-    if not ai_model: return {"Score": 0, "Reason": "AI Offline"}
-    
-    news_str = "\n".join([n['Headline'] for n in squawk_list]) if squawk_list else "No major news"
-    prompt = f"Expert Analyst: {action} setup on {pair}. Strength {s_score} vs {w_score}. COT/Vol/OI Aligned. Live News: {news_str}. Batao yeh trade safe hai ya news risk? (Roman Urdu, 2 lines max)"
-    
-    try:
-        response = ai_model.generate_content(prompt)
-        return {"Score": 90, "Reason": response.text[:300]} 
-    except Exception as e:
-        return {"Score": 0, "Reason": f"Error"}
-
-
-# --- 4. OUTPUT UI BLOCKS ---
-
+# ==========================================
+# 5. DASHBOARD UI BLOCKS
+# ==========================================
 def show_sessions():
     pkt_tz = pytz.timezone('Asia/Karachi')
     now = datetime.now(pkt_tz)
@@ -179,8 +354,6 @@ def show_sessions():
             text = f"<span style='color:#666;'>Closed</span><br><small>Opens in {wait//60}h {wait%60}m</small>"
         cols[i].markdown(f"<div style='padding:15px; border-radius:10px; {bg_style} text-align:center;'><h4>{s['name']}</h4><p>{text}</p></div>", unsafe_allow_html=True)
 
-# --- 5. MAIN DASHBOARD ---
-
 st.subheader("🌍 Global Market Sessions (PKT)")
 show_sessions()
 st.divider()
@@ -188,33 +361,23 @@ st.divider()
 col_left, col_right = st.columns([2.5, 1])
 
 with col_left:
-    
-    # 1. Load Data silently in background like AlertBot
     cot_df = load_cot_data()
     oi_df = load_daily_oi()
     df_fx = get_market_data()
     news_df, squawk_list = get_news_and_squawk() 
     
-    # 2. Render Live Engine Status UI
-    st.subheader("📡 Live Engine Status (AlertBot Scanner)")
-    
+    st.subheader("📡 Live Engine Status (Dashboard Logic)")
     if not df_fx.empty:
         currencies = ['USD', 'EUR', 'GBP', 'AUD', 'NZD', 'CAD', 'CHF', 'JPY', 'XAU']
         cols = st.columns(len(currencies))
-        
         for i, cur in enumerate(currencies):
             cur_data = df_fx[df_fx['Instrument'] == cur]
-            if not cur_data.empty:
-                status = cur_data['Status'].values[0]
-            else:
-                status = "Neutral"
+            if not cur_data.empty: status = cur_data['Status'].values[0]
+            else: status = "Neutral"
                 
-            if status == "Strong":
-                bg_color = "#1a5c20"; icon = "🟢"
-            elif status == "Weak":
-                bg_color = "#5c1a1a"; icon = "🔴"
-            else:
-                bg_color = "#2b2b2b"; icon = "⚪"
+            if status == "Strong": bg_color = "#1a5c20"; icon = "🟢"
+            elif status == "Weak": bg_color = "#5c1a1a"; icon = "🔴"
+            else: bg_color = "#2b2b2b"; icon = "⚪"
                 
             cols[i].markdown(
                 f"<div style='text-align:center; padding:10px; margin-bottom:15px; border-radius:8px; background-color:{bg_color}; border:1px solid #444;'>"
@@ -223,30 +386,21 @@ with col_left:
                 unsafe_allow_html=True
             )
 
-    # 3. Match Setups using AlertBot Logic
     phase1_setups = []
-    ai_verified_setups = []
-    
     strong = df_fx[df_fx['Score'] >= 6]
     weak = df_fx[df_fx['Score'] <= 4]
     
     for _, s in strong.iterrows():
         for _, w in weak.iterrows():
             c1, c2 = s['Instrument'], w['Instrument']
-            
-            # Check COT
-            cot_align = True
+            cot_align, oi_align = True, True
             if not cot_df.empty:
                 s_sent = cot_df[cot_df['Instrument'].str.contains(c1, case=False)]['Direction'].values
                 if len(s_sent) > 0 and "Bearish" in s_sent[0]: cot_align = False
-            
-            # Check Daily OI
-            oi_align = True
             if not oi_df.empty and 'Status' in oi_df.columns:
                 s_oi = oi_df[oi_df['Instrument'] == c1]['Status'].values
                 if len(s_oi) > 0 and "Decreasing" in s_oi[0]: oi_align = False
                 
-            # If All Aligned (COT + OI + Vol)
             if cot_align and oi_align and ("✅" in s['Volume Confirm'] or "✅" in w['Volume Confirm']):
                 order = ['XAU', 'EUR', 'GBP', 'AUD', 'NZD', 'USD', 'CAD', 'CHF', 'JPY']
                 try:
@@ -254,51 +408,21 @@ with col_left:
                     else: pair, action = f"{c2}{c1}", "SELL"
                     
                     phase1_setups.append({
-                        "Pair": pair, 
-                        "Type": action, 
-                        "s_score": s['Score'], 
-                        "w_score": w['Score'],
+                        "Pair": pair, "Type": action, "s_score": s['Score'], "w_score": w['Score'],
                         "Logic": f"Strength {s['Score']} vs {w['Score']} (COT/OI/Vol Aligned)"
                     })
                 except: pass
 
-    # 4. Show Phase 1 Setups
-    st.subheader("⚙️ Phase 1: Technical Setups (Dual-Leg)")
+    st.subheader("⚙️ Phase 1: Technical Setups (Dashboard Match)")
     if phase1_setups:
         for sig in phase1_setups:
             color = "🟢" if sig['Type'] == "BUY" else "🔴"
             st.info(f"{color} **{sig['Type']} {sig['Pair']}** | 🏗️ {sig['Logic']}")
     else:
-        st.write("💤 Filhal Phase 1 mein koi AlertBot Alignment nahi. Waiting for Volume, COT & OI confirmation...")
+        st.write("💤 Filhal Phase 1 mein koi Alignment nahi. Waiting for confirmation...")
 
     st.divider()
     
-    # 5. Show Phase 2 AI Verification
-    st.subheader("🤖 Phase 2: AI Verified Setups (News Fundamentals)")
-    
-    if phase1_setups:
-        with st.spinner('AI is verifying News & Fundamentals like AlertBot...'):
-            for sig in phase1_setups:
-                ai_verification = verify_signal_with_ai(sig['Type'], sig['Pair'], sig['s_score'], sig['w_score'], squawk_list)
-                if ai_verification and "Error" not in ai_verification['Reason']:
-                    ai_verified_setups.append({"signal": sig, "ai": ai_verification})
-        
-        if ai_verified_setups:
-            for item in ai_verified_setups:
-                sig = item['signal']
-                ai = item['ai']
-                color = "🟢" if sig['Type'] == "BUY" else "🔴"
-                with st.expander(f"{color} {sig['Type']} {sig['Pair']} - AI Signal Ready", expanded=True):
-                    st.write(f"🏗️ **System Check:** {sig['Logic']}")
-                    st.success(f"🤖 **AI Verdict:** {ai['Reason']}")
-        else:
-             st.warning("Phase 1 ke setups ko AI ne News Risk ki wajah se reject kar diya hai.")
-    else:
-        st.write("Phase 1 mein koi setup nahi aaya is liye AI Verification pending hai.")
-
-    st.divider()
-    
-    # 6. Scheduled News
     st.subheader("📅 Scheduled News (High Impact)")
     if not news_df.empty:
         html_table = "<table style='width:100%; text-align:left; font-size:14px; border-collapse: collapse;'>"
@@ -316,25 +440,18 @@ with col_right:
         for item in squawk_list:
             st.markdown(f"**{item['Headline']}**<br><small>{item['Time']}</small><hr>", unsafe_allow_html=True)
     else:
-        st.info("📡 Live news feed se connection check ho raha hai. Filhal koi new headline nahi...")
+        st.info("📡 Live news feed se connection check ho raha hai...")
 
 st.divider()
 query = st.chat_input("Ask Gemini about fundamental alignment...")
 
 if query and ai_model: 
     try:
-        system_prompt = f"""
-        You are an expert Forex Quant Trader assisting a professional trader.
+        system_prompt = f"""You are an expert Forex Quant Trader assisting a professional trader.
         The user is asking you: "{query}"
-
-        STRICT RULES FOR YOUR RESPONSE:
-        1. Language: You MUST reply ONLY in Roman Urdu (Urdu written in English alphabets).
-        2. Scope: Focus strictly on the Forex market and Gold (XAUUSD). 
-        3. Tone: Keep the analysis professional, crisp, and to the point.
-        """
+        STRICT RULES: 1. Reply ONLY in Roman Urdu. 2. Focus strictly on Forex/Gold. 3. Be crisp and professional."""
         with st.spinner("AI is analyzing the market..."):
             response = ai_model.generate_content(system_prompt)
             st.write(f"🤖: {response.text}")
-            
     except Exception as e:
         st.error(f"⚠️ Gemini API connection error. Details: {e}")
