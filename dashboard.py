@@ -281,7 +281,7 @@ def get_market_data():
 def get_news_and_squawk():
     pkt_tz = pytz.timezone('Asia/Karachi')
     now_pkt = datetime.now(pkt_tz)
-    est_tz = pytz.timezone('US/Eastern')
+    est_tz = pytz.timezone('UTC')
     news = []
     try:
         r = requests.get("https://nfs.faireconomy.media/ff_calendar_thisweek.xml", timeout=10)
