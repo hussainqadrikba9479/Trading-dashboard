@@ -21,8 +21,7 @@ st.set_page_config(page_title="Hussain Algo Terminal V17 (Master Engine)", page_
 
 try:
     # VPS par secrets run karne ke liye hum st.secrets use karenge
-    api_key = st.secrets["GEMINI_API_KEY"] if "GEMINI_API_KEY" in st.secrets else os.environ.get("GEMINI_API_KEY")
-    genai.configure(api_key=api_key)
+    api_key = "AIzaSyBY-Ce_CjAEv8Ux40dEVxk_a6suE6Og-ts"
     
     working_model = None
     for m in genai.list_models():
