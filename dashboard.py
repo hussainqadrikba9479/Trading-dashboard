@@ -4,7 +4,7 @@ import yfinance as yf
 import google.generativeai as genai
 import requests
 import xml.etree.ElementTree as ET
-from datetime import datetime
+from datetime import datetime, timedelta
 import pytz
 from email.utils import parsedate_to_datetime
 import smtplib
@@ -20,8 +20,11 @@ import time
 st.set_page_config(page_title="Hussain Algo Terminal V17 (Master Engine)", page_icon="⚡", layout="wide")
 
 try:
-    # VPS par secrets run karne ke liye hum st.secrets use karenge
+    # AI Key yahan di gayi hai
     api_key = "AIzaSyBY-Ce_CjAEv8Ux40dEVxk_a6suE6Og-ts"
+    
+    # YEH LINE MISSING THI JIS KI WAJAH SE AI OFFLINE THA!
+    genai.configure(api_key=api_key)
     
     working_model = None
     for m in genai.list_models():
@@ -53,7 +56,6 @@ def mark_as_sent(pair, action):
         f.write(record)
 
 def send_email_alert(subject, body):
-    # Email credentials Streamlit secrets se le ga
     try:
         sender_email = st.secrets["EMAIL_SENDER"]
         sender_password = st.secrets["EMAIL_PASSWORD"]
@@ -102,7 +104,6 @@ def get_all_currency_strengths():
                 strengths[curr] = {"status": "Neutral", "reason": "Not Enough Data"}
                 continue
             
-            # Volume & Structure Analysis (Wyckoff)
             prev_high = df['High'].rolling(20).max().shift(1).iloc[-1]
             prev_low = df['Low'].rolling(20).min().shift(1).iloc[-1]
             avg_vol = df['Volume'].rolling(20).mean().shift(1).iloc[-1]
@@ -173,7 +174,7 @@ def run_bot():
             mark_as_sent("TEST", "WELCOME_EMAIL")
 
     currency_strengths = get_all_currency_strengths()
-    live_news, squawk_list = get_news_and_squawk() # Dashboard function reuse
+    live_news, squawk_list = get_news_and_squawk() 
     
     forex_pairs = ['EURUSD', 'GBPUSD', 'AUDUSD', 'NZDUSD', 'USDCAD', 'USDCHF', 'USDJPY', 'EURJPY', 'GBPJPY', 'AUDJPY', 'XAUUSD']
     
@@ -201,7 +202,6 @@ def run_bot():
     if not found_setup:
         print("💤 No new unique setups found in this cycle.")
 
-# THREADING: Run bot in background continuously
 @st.cache_resource
 def start_background_bot():
     def alert_loop():
@@ -210,7 +210,7 @@ def start_background_bot():
                 run_bot()
             except Exception as e:
                 print(f"Bot Loop Error: {e}")
-            time.sleep(1800) # Har 30 Minute baad scan karega (1800 seconds)
+            time.sleep(1800) 
             
     thread = threading.Thread(target=alert_loop, daemon=True)
     thread.start()
@@ -281,7 +281,7 @@ def get_market_data():
 def get_news_and_squawk():
     pkt_tz = pytz.timezone('Asia/Karachi')
     now_pkt = datetime.now(pkt_tz)
-    est_tz = pytz.timezone('UTC')
+    est_tz = pytz.timezone('US/Eastern')
     news = []
     try:
         r = requests.get("https://nfs.faireconomy.media/ff_calendar_thisweek.xml", timeout=10)
@@ -302,7 +302,10 @@ def get_news_and_squawk():
                         dt_str = f"{date_str} {time_str}"
                         dt_est = datetime.strptime(dt_str, "%m-%d-%Y %I:%M%p")
                         dt_est = est_tz.localize(dt_est)
-                        dt_pkt = dt_est.astimezone(pkt_tz)
+                        
+                        # TIME FIX: Manual 4 hours minus from VPS offset
+                        dt_pkt = dt_est.astimezone(pkt_tz) - timedelta(hours=4)
+                        
                         display_time = dt_pkt.strftime("%I:%M %p")
                         if now_pkt > dt_pkt: is_past = True
                 except: pass
@@ -344,113 +347,4 @@ def show_sessions():
         close_mins = s["close"] * 60 if s["close"] > s["open"] else (s["close"] + 24) * 60
         is_active = open_mins <= current_time_minutes < close_mins
         if is_active:
-            bg_style = "background: linear-gradient(145deg, #0a2113, #113a22); border: 1px solid #00ff88; box-shadow: 0 0 12px rgba(0, 255, 136, 0.3);"
-            remaining = close_mins - current_time_minutes
-            text = f"<span style='color:#00ff88; font-weight:bold;'>🟢 ACTIVE</span><br><small>Closes in {remaining//60}h {remaining%60}m</small>"
-        else:
-            bg_style = "background-color: #1e1e1e; border: 1px solid #333;"
-            wait = open_mins - current_time_minutes if current_time_minutes < open_mins else (open_mins + 24*60) - current_time_minutes
-            text = f"<span style='color:#666;'>Closed</span><br><small>Opens in {wait//60}h {wait%60}m</small>"
-        cols[i].markdown(f"<div style='padding:15px; border-radius:10px; {bg_style} text-align:center;'><h4>{s['name']}</h4><p>{text}</p></div>", unsafe_allow_html=True)
-
-st.subheader("🌍 Global Market Sessions (PKT)")
-show_sessions()
-st.divider()
-
-col_left, col_right = st.columns([2.5, 1])
-
-with col_left:
-    cot_df = load_cot_data()
-    oi_df = load_daily_oi()
-    df_fx = get_market_data()
-    news_df, squawk_list = get_news_and_squawk() 
-    
-    st.subheader("📡 Live Engine Status (Dashboard Logic)")
-    if not df_fx.empty:
-        currencies = ['USD', 'EUR', 'GBP', 'AUD', 'NZD', 'CAD', 'CHF', 'JPY', 'XAU']
-        cols = st.columns(len(currencies))
-        for i, cur in enumerate(currencies):
-            cur_data = df_fx[df_fx['Instrument'] == cur]
-            if not cur_data.empty: status = cur_data['Status'].values[0]
-            else: status = "Neutral"
-                
-            if status == "Strong": bg_color = "#1a5c20"; icon = "🟢"
-            elif status == "Weak": bg_color = "#5c1a1a"; icon = "🔴"
-            else: bg_color = "#2b2b2b"; icon = "⚪"
-                
-            cols[i].markdown(
-                f"<div style='text-align:center; padding:10px; margin-bottom:15px; border-radius:8px; background-color:{bg_color}; border:1px solid #444;'>"
-                f"<span style='font-size:12px; color:#ccc;'>{cur}</span><br>"
-                f"<b>{icon} {status}</b></div>", 
-                unsafe_allow_html=True
-            )
-
-    phase1_setups = []
-    strong = df_fx[df_fx['Score'] >= 6]
-    weak = df_fx[df_fx['Score'] <= 4]
-    
-    for _, s in strong.iterrows():
-        for _, w in weak.iterrows():
-            c1, c2 = s['Instrument'], w['Instrument']
-            cot_align, oi_align = True, True
-            if not cot_df.empty:
-                s_sent = cot_df[cot_df['Instrument'].str.contains(c1, case=False)]['Direction'].values
-                if len(s_sent) > 0 and "Bearish" in s_sent[0]: cot_align = False
-            if not oi_df.empty and 'Status' in oi_df.columns:
-                s_oi = oi_df[oi_df['Instrument'] == c1]['Status'].values
-                if len(s_oi) > 0 and "Decreasing" in s_oi[0]: oi_align = False
-                
-            if cot_align and oi_align and ("✅" in s['Volume Confirm'] or "✅" in w['Volume Confirm']):
-                order = ['XAU', 'EUR', 'GBP', 'AUD', 'NZD', 'USD', 'CAD', 'CHF', 'JPY']
-                try:
-                    if order.index(c1) < order.index(c2): pair, action = f"{c1}{c2}", "BUY"
-                    else: pair, action = f"{c2}{c1}", "SELL"
-                    
-                    phase1_setups.append({
-                        "Pair": pair, "Type": action, "s_score": s['Score'], "w_score": w['Score'],
-                        "Logic": f"Strength {s['Score']} vs {w['Score']} (COT/OI/Vol Aligned)"
-                    })
-                except: pass
-
-    st.subheader("⚙️ Phase 1: Technical Setups (Dashboard Match)")
-    if phase1_setups:
-        for sig in phase1_setups:
-            color = "🟢" if sig['Type'] == "BUY" else "🔴"
-            st.info(f"{color} **{sig['Type']} {sig['Pair']}** | 🏗️ {sig['Logic']}")
-    else:
-        st.write("💤 Filhal Phase 1 mein koi Alignment nahi. Waiting for confirmation...")
-
-    st.divider()
-    
-    st.subheader("📅 Scheduled News (High Impact)")
-    if not news_df.empty:
-        html_table = "<table style='width:100%; text-align:left; font-size:14px; border-collapse: collapse;'>"
-        html_table += "<tr style='border-bottom: 2px solid #555; color:#ccc; background-color: #1e1e1e;'><th>Date</th><th>Time(PKT)</th><th>Imp</th><th>Cur</th><th>Event</th><th>Actual</th></tr>"
-        for idx, row in news_df.iterrows():
-            row_style = "text-decoration: line-through; color: #666;" if row['_is_past'] else "color: #fff;"
-            html_table += f"<tr style='border-bottom: 1px solid #333; {row_style}'>"
-            html_table += f"<td style='padding:8px;'>{row['Date']}</td><td>{row['Time (PKT)']}</td><td>{row['Impact']}</td><td><b>{row['Cur']}</b></td><td>{row['Event']}</td><td>{row['Actual']}</td></tr>"
-        html_table += "</table>"
-        st.markdown(html_table, unsafe_allow_html=True)
-
-with col_right:
-    st.subheader("⚡ Live Squawk")
-    if squawk_list:
-        for item in squawk_list:
-            st.markdown(f"**{item['Headline']}**<br><small>{item['Time']}</small><hr>", unsafe_allow_html=True)
-    else:
-        st.info("📡 Live news feed se connection check ho raha hai...")
-
-st.divider()
-query = st.chat_input("Ask Gemini about fundamental alignment...")
-
-if query and ai_model: 
-    try:
-        system_prompt = f"""You are an expert Forex Quant Trader assisting a professional trader.
-        The user is asking you: "{query}"
-        STRICT RULES: 1. Reply ONLY in Roman Urdu. 2. Focus strictly on Forex/Gold. 3. Be crisp and professional."""
-        with st.spinner("AI is analyzing the market..."):
-            response = ai_model.generate_content(system_prompt)
-            st.write(f"🤖: {response.text}")
-    except Exception as e:
-        st.error(f"⚠️ Gemini API connection error. Details: {e}")
+            bg_style = "background: linear
