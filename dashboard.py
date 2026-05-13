@@ -62,6 +62,7 @@ def mark_as_sent(pair, action):
         f.write(record)
 
 def send_email_alert(subject, body):
+    return False
     try:
         sender_email = st.secrets.get("EMAIL_SENDER", os.environ.get("EMAIL_SENDER", ""))
         sender_password = st.secrets.get("EMAIL_PASSWORD", os.environ.get("EMAIL_PASSWORD", ""))
